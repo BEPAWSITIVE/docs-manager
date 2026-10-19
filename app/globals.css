@@ -25,94 +25,6 @@ html, body {
   overflow: hidden;
 }
 
-/* Browser Top Chrome */
-.browser-titlebar {
-  display: flex;
-  align-items: center;
-  height: 42px;
-  background-color: #f1f3f4;
-  border-bottom: 1px solid #e1e3e6;
-  padding: 0 14px;
-  gap: 16px;
-  flex-shrink: 0;
-}
-
-.traffic-lights {
-  display: flex;
-  gap: 8px;
-}
-
-.traffic-light {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.traffic-light.red { background-color: #ff5f56; }
-.traffic-light.yellow { background-color: #ffbd2e; }
-.traffic-light.green { background-color: #27c93f; }
-
-.browser-tab {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background-color: #ffffff;
-  padding: 6px 14px;
-  border-radius: 8px 8px 0 0;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: #3c4043;
-  box-shadow: 0 -1px 3px rgba(0,0,0,0.05);
-}
-
-.browser-tab-close {
-  font-size: 14px;
-  color: #5f6368;
-  margin-left: 6px;
-  cursor: pointer;
-}
-
-.browser-nav-bar {
-  display: flex;
-  align-items: center;
-  height: 38px;
-  background-color: #ffffff;
-  border-bottom: 1px solid #e8eaed;
-  padding: 0 14px;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.nav-buttons {
-  display: flex;
-  gap: 12px;
-  color: #5f6368;
-  font-size: 15px;
-}
-
-.url-bar {
-  flex: 1;
-  max-width: 600px;
-  height: 28px;
-  background-color: #f1f3f4;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  font-size: 12.5px;
-  color: #202124;
-  gap: 8px;
-}
-
-.browser-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-left: auto;
-  color: #5f6368;
-  font-size: 14px;
-}
-
 /* ==========================================================================
    APP DESKTOP 3-PANEL VIEW
    ========================================================================== */
@@ -216,32 +128,6 @@ html, body {
   letter-spacing: -0.01em;
 }
 
-.sidebar-search-area {
-  padding: 0 16px 14px 16px;
-}
-
-.search-input-wrapper {
-  background-color: #f0f2f5;
-  border-radius: 8px;
-  padding: 8px 14px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #667781;
-}
-
-.search-input-field {
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: 13.5px;
-  color: #111b21;
-  width: 100%;
-}
-
-.search-input-field::placeholder {
-  color: #667781;
-}
 
 /* Chat Item */
 .chat-list {

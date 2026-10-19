@@ -10,7 +10,6 @@ export default function DocsManagerPage() {
   const [hasBackendKey, setHasBackendKey] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [storedDocs, setStoredDocs] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [isDragging, setIsDragging] = useState(false);
 
   // Supabase Server Status State
@@ -411,41 +410,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Chrome Top Bar */}
-      <div className="browser-titlebar">
-        <div className="traffic-lights">
-          <div className="traffic-light red" />
-          <div className="traffic-light yellow" />
-          <div className="traffic-light green" />
-        </div>
-        <div className="browser-tab">
-          <div style={{ width: 14, height: 14, backgroundColor: '#00a884', borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 9, color: 'white', fontWeight: 'bold' }}>✓</span>
-          </div>
-          <span>Docs Manager</span>
-          <span className="browser-tab-close">×</span>
-        </div>
-        <span style={{ color: '#5f6368', fontSize: 16 }}>+</span>
-      </div>
-
-      {/* Browser URL Navigation Bar */}
-      <div className="browser-nav-bar">
-        <div className="nav-buttons">
-          <span>←</span>
-          <span>→</span>
-          <span>↻</span>
-        </div>
-        <div className="url-bar">
-          <span style={{ color: '#5f6368', fontSize: 12 }}>🔒</span>
-          <span>https://docsmanager.app</span>
-        </div>
-        <div className="browser-actions">
-          <span>☆</span>
-          <span>👤</span>
-          <span>⋮</span>
-        </div>
-      </div>
-
       {/* 3-Panel Main Layout */}
       <div className="app-container">
         {/* 1. Far-Left Navigation Rail (#004838) */}
@@ -486,22 +450,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
                 ☁️ Cloud
               </span>
             )}
-          </div>
-
-          <div className="sidebar-search-area">
-            <div className="search-input-wrapper">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#667781" strokeWidth="2.5">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="text"
-                className="search-input-field"
-                placeholder="Search chats..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
           </div>
 
 
