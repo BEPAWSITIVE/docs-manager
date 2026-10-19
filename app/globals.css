@@ -958,3 +958,116 @@ html, body {
   cursor: pointer;
   font-weight: 600;
 }
+
+/* Service Card in Settings Modal */
+.settings-service-card {
+  background-color: #f8f9fa;
+  border: 1px solid #e9edef;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.service-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.service-icon {
+  font-size: 22px;
+}
+
+.service-subtext {
+  font-size: 11.5px;
+  color: #667781;
+  margin-top: 2px;
+}
+
+.status-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.status-badge.connected {
+  background-color: #e7f7ef;
+  color: #008069;
+  border: 1px solid #b8e6d2;
+}
+
+.status-badge.missing {
+  background-color: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
+}
+
+.status-badge.offline {
+  background-color: #f0f2f5;
+  color: #54656f;
+  border: 1px solid #d1d7db;
+}
+
+/* Security Notice Box */
+.security-notice-box {
+  background-color: #f0f8ff;
+  border: 1px solid #b8daff;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.security-notice-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #004085;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.security-notice-p {
+  font-size: 12px;
+  color: #495057;
+  line-height: 1.5;
+  margin: 0 0 10px 0;
+}
+
+.security-env-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.env-grid-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #d0e2ff;
+  font-size: 11.5px;
+}
+
+.env-grid-item code {
+  font-weight: 700;
+  color: #004085;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.env-grid-item span {
+  color: #667781;
+}
+

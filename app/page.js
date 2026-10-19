@@ -5,34 +5,24 @@ import React, { useState, useEffect, useRef } from 'react';
 export default function DocsManagerPage() {
   // State
   const [messages, setMessages] = useState([]);
-
   const [input, setInput] = useState('');
-  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
   const [hasBackendKey, setHasBackendKey] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [keyStatus, setKeyStatus] = useState('');
-  const [isVerifying, setIsVerifying] = useState(false);
   const [storedDocs, setStoredDocs] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isVaultOpen, setIsVaultOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
-  const [inlineKeyInput, setInlineKeyInput] = useState('');
 
-  // Supabase Configuration State
-  const [supabaseUrl, setSupabaseUrl] = useState('');
-  const [supabaseKey, setSupabaseKey] = useState('');
+  // Supabase Server Status State
   const [supabaseBucket, setSupabaseBucket] = useState('documents');
   const [isSupabaseEnabled, setIsSupabaseEnabled] = useState(false);
-  const [supabaseStatus, setSupabaseStatus] = useState('');
-  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
-  const [settingsTab, setSettingsTab] = useState('gemini'); // 'gemini' | 'supabase'
+  const [settingsTab, setSettingsTab] = useState('status'); // 'status' | 'sql'
   const [copiedSql, setCopiedSql] = useState(false);
 
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  // Load API Key & Supabase Config from Backend & localStorage
+  // Load Server Status & Model Preference
   useEffect(() => {
     const initConfig = async () => {
       try {
@@ -52,28 +42,11 @@ export default function DocsManagerPage() {
         const sbRes = await fetch('/api/supabase/config');
         if (sbRes.ok) {
           const sbCfg = await sbRes.json();
-          if (sbCfg.url) setSupabaseUrl(sbCfg.url);
           if (sbCfg.bucket) setSupabaseBucket(sbCfg.bucket);
           if (sbCfg.enabled) setIsSupabaseEnabled(true);
         }
       } catch (err) {
         console.log('Error checking supabase config:', err);
-      }
-
-      const savedKey = localStorage.getItem('gemini_api_key');
-      if (savedKey) {
-        setGeminiApiKey(savedKey);
-        // Sync with backend
-        fetch('/api/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_key: savedKey, model: 'gemini-2.5-flash' }),
-        })
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.valid) setHasBackendKey(true);
-          })
-          .catch(() => {});
       }
 
       const savedModel = localStorage.getItem('gemini_model');
@@ -105,126 +78,9 @@ export default function DocsManagerPage() {
     scrollToBottom();
   }, [messages]);
 
-  const saveSettings = async (keyToSave) => {
-    const key = (keyToSave || geminiApiKey).trim();
-    if (!key) return;
-
-    localStorage.setItem('gemini_api_key', key);
-    localStorage.setItem('gemini_model', selectedModel);
-    setGeminiApiKey(key);
-
-    try {
-      const res = await fetch('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: key, model: selectedModel }),
-      });
-      const data = await res.json();
-      if (data.valid) {
-        setHasBackendKey(true);
-        setKeyStatus('✓ Key saved and verified active!');
-        fetchStoredDocuments();
-      } else {
-        setKeyStatus('✗ Invalid API Key. Please verify.');
-      }
-    } catch (e) {
-      setKeyStatus('Saved locally.');
-    }
-    setIsSettingsOpen(false);
-  };
-
-  const verifyKey = async () => {
-    if (!geminiApiKey.trim()) {
-      setKeyStatus('Please enter an API key');
-      return;
-    }
-    setIsVerifying(true);
-    setKeyStatus('Checking key...');
-    try {
-      const res = await fetch('/api/test-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: geminiApiKey, model: selectedModel }),
-      });
-      const data = await res.json();
-      if (data.valid) {
-        setHasBackendKey(true);
-        setKeyStatus('✓ Key is active and verified!');
-      } else {
-        setKeyStatus('✗ Invalid API Key. Please verify.');
-      }
-    } catch (err) {
-      setKeyStatus('✗ Could not reach backend server.');
-    } finally {
-      setIsVerifying(false);
-    }
-  };
-
-  const testSupabaseConnection = async () => {
-    if (!supabaseUrl.trim() || !supabaseKey.trim()) {
-      setSupabaseStatus('⚠️ Supabase Project URL and API Key are required.');
-      return;
-    }
-    setIsTestingSupabase(true);
-    setSupabaseStatus('Testing connection to Supabase...');
-    try {
-      const res = await fetch('/api/supabase/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: supabaseUrl.trim(),
-          key: supabaseKey.trim(),
-          bucket: (supabaseBucket || 'documents').trim(),
-        }),
-      });
-      const data = await res.json();
-      if (data.valid) {
-        let msg = '✓ Connected to Supabase!';
-        if (data.table_ready === false) {
-          msg += ' (Notice: documents_metadata table not created yet. Copy and run SQL below)';
-        }
-        setSupabaseStatus(msg);
-      } else {
-        setSupabaseStatus(`✗ ${data.message || 'Connection failed'}`);
-      }
-    } catch (err) {
-      setSupabaseStatus('✗ Could not reach backend server.');
-    } finally {
-      setIsTestingSupabase(false);
-    }
-  };
-
-  const saveSupabaseConfig = async () => {
-    if (!supabaseUrl.trim() || !supabaseKey.trim()) {
-      setSupabaseStatus('⚠️ Supabase Project URL and API Key are required.');
-      return;
-    }
-    setIsTestingSupabase(true);
-    setSupabaseStatus('Connecting & saving Supabase settings...');
-    try {
-      const res = await fetch('/api/supabase/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: supabaseUrl.trim(),
-          key: supabaseKey.trim(),
-          bucket: (supabaseBucket || 'documents').trim(),
-          enabled: isSupabaseEnabled,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.status === 'success') {
-        setIsSupabaseEnabled(true);
-        setSupabaseStatus('✓ Connected! Supabase bucket & database are active.');
-        fetchStoredDocuments();
-      } else {
-        setSupabaseStatus(`✗ ${data.detail || data.message || 'Failed to save configuration'}`);
-      }
-    } catch (err) {
-      setSupabaseStatus('✗ Server connection failed.');
-    } finally {
-      setIsTestingSupabase(false);
-    }
+  const handleModelChange = (model) => {
+    setSelectedModel(model);
+    localStorage.setItem('gemini_model', model);
   };
 
   const copySqlSnippet = () => {
@@ -321,22 +177,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
   const uploadFile = async (file) => {
     if (!file) return;
 
-    // Check if key is available
-    if (!hasBackendKey && !geminiApiKey.trim()) {
-      setIsSettingsOpen(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          role: 'assistant',
-          type: 'text',
-          content: '⚠️ Please enter your Gemini API Key in Settings (⚙️) or the sidebar first so the document can be analyzed.',
-          time: getFormatTime(),
-        },
-      ]);
-      return;
-    }
-
     const timeNow = getFormatTime();
     const extUpper = file.name.includes('.') ? file.name.split('.').pop().toUpperCase() : 'FILE';
     const sizeStr = `${formatFileSize(file.size)} • ${extUpper}`;
@@ -359,7 +199,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
     try {
       const formData = new FormData();
       formData.append('file', file);
-      if (geminiApiKey) formData.append('api_key', geminiApiKey);
       if (selectedModel) formData.append('model', selectedModel);
 
       const res = await fetch('/api/upload', {
@@ -388,7 +227,7 @@ FOR DELETE USING (bucket_id = 'documents');`;
             id: Date.now() + 1,
             role: 'assistant',
             type: 'text',
-            content: errData.detail || 'Upload failed. Please check your Gemini API key.',
+            content: errData.detail || 'Upload failed. Please check server environment configuration.',
             time: getFormatTime(),
           },
         ]);
@@ -484,7 +323,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: queryText,
-          api_key: geminiApiKey,
           model: selectedModel,
         }),
       });
@@ -666,29 +504,6 @@ FOR DELETE USING (bucket_id = 'documents');`;
             </div>
           </div>
 
-          {/* Prompt if API Key is not configured yet */}
-          {!hasBackendKey && !geminiApiKey && (
-            <div className="sidebar-key-card">
-              <strong>🔑 Gemini API Key Needed</strong>
-              <span>Enter key to analyze IDs & documents:</span>
-              <div className="sidebar-key-input-row">
-                <input
-                  type="password"
-                  className="sidebar-key-input"
-                  placeholder="AIzaSy..."
-                  value={inlineKeyInput}
-                  onChange={(e) => setInlineKeyInput(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="sidebar-key-btn"
-                  onClick={() => saveSettings(inlineKeyInput)}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          )}
 
           <div className="chat-list">
             <div className="chat-item active">
@@ -925,7 +740,7 @@ FOR DELETE USING (bucket_id = 'documents');`;
         </div>
       </div>
 
-      {/* Settings Modal (Gemini AI & Supabase Cloud Storage) */}
+      {/* Settings Modal (System Status & SQL Setup) */}
       {isSettingsOpen && (
         <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -933,151 +748,123 @@ FOR DELETE USING (bucket_id = 'documents');`;
               <span>⚙️</span> Docs Manager Settings
             </div>
             <div className="modal-desc">
-              Configure your AI classification engine and Supabase cloud storage.
+              System status, AI classification engine, and database schema setup.
             </div>
 
             {/* Modal Tabs */}
             <div className="modal-tabs">
               <button
                 type="button"
-                className={`modal-tab-btn ${settingsTab === 'gemini' ? 'active' : ''}`}
-                onClick={() => setSettingsTab('gemini')}
+                className={`modal-tab-btn ${settingsTab === 'status' ? 'active' : ''}`}
+                onClick={() => setSettingsTab('status')}
               >
-                <span>🤖</span> Gemini AI {hasBackendKey ? '✓' : ''}
+                <span>📊</span> System Status
               </button>
               <button
                 type="button"
-                className={`modal-tab-btn ${settingsTab === 'supabase' ? 'active' : ''}`}
-                onClick={() => setSettingsTab('supabase')}
+                className={`modal-tab-btn ${settingsTab === 'sql' ? 'active' : ''}`}
+                onClick={() => setSettingsTab('sql')}
               >
-                <span>☁️</span> Cloud Storage (Supabase) {isSupabaseEnabled ? '✓' : ''}
+                <span>☁️</span> Supabase SQL Setup
               </button>
             </div>
 
-            {settingsTab === 'gemini' ? (
+            {settingsTab === 'status' ? (
               <div>
-                <div className="form-group">
-                  <label className="form-label">Gemini API Key</label>
-                  <input
-                    type="password"
-                    className="form-input"
-                    placeholder="Paste Gemini API Key (AIzaSy...)"
-                    value={geminiApiKey}
-                    onChange={(e) => setGeminiApiKey(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Gemini Model</label>
-                  <select
-                    className="form-input"
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                  >
-                    <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
-                    <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                    <option value="gemini-1.5-flash">gemini-1.5-flash</option>
-                    <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-                  </select>
-                </div>
-
-                {keyStatus && (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      marginTop: 8,
-                      color: keyStatus.includes('✓') ? '#00a884' : '#e53935',
-                    }}
-                  >
-                    {keyStatus}
+                {/* Gemini AI Status Card */}
+                <div className="settings-service-card">
+                  <div className="service-card-header">
+                    <div className="service-name-row">
+                      <span className="service-icon">🤖</span>
+                      <div>
+                        <strong>Gemini AI Engine</strong>
+                        <div className="service-subtext">Vision, OCR & Semantic Document Retrieval</div>
+                      </div>
+                    </div>
+                    {hasBackendKey ? (
+                      <span className="status-badge connected">● Connected</span>
+                    ) : (
+                      <span className="status-badge missing">⚠️ Missing GEMINI_API_KEY</span>
+                    )}
                   </div>
-                )}
+
+                  <div className="form-group" style={{ marginTop: 14, marginBottom: 4 }}>
+                    <label className="form-label">Active Gemini Model</label>
+                    <select
+                      className="form-input"
+                      value={selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                    >
+                      <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
+                      <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                      <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                      <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Supabase Cloud Status Card */}
+                <div className="settings-service-card" style={{ marginTop: 12 }}>
+                  <div className="service-card-header">
+                    <div className="service-name-row">
+                      <span className="service-icon">☁️</span>
+                      <div>
+                        <strong>Supabase Cloud Storage & DB</strong>
+                        <div className="service-subtext">Bucket: <code>{supabaseBucket}</code></div>
+                      </div>
+                    </div>
+                    {isSupabaseEnabled ? (
+                      <span className="status-badge connected">● Connected</span>
+                    ) : (
+                      <span className="status-badge offline">📁 Local Vault Mode</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#667781', marginTop: 8 }}>
+                    {isSupabaseEnabled
+                      ? 'Files and metadata are automatically synced with your Supabase Cloud project.'
+                      : 'Running in local filesystem mode. To enable Cloud Storage, set SUPABASE_URL and SUPABASE_KEY in your server environment variables.'}
+                  </div>
+                </div>
+
+                {/* Security Notice Box */}
+                <div className="security-notice-box" style={{ marginTop: 16 }}>
+                  <div className="security-notice-title">
+                    <span>🔒</span> Security & Environment Variables
+                  </div>
+                  <p className="security-notice-p">
+                    For optimal security, credentials cannot be entered in the browser. Configure them securely in your server environment (<code>.env</code> file locally or <strong>Vercel Environment Variables</strong>):
+                  </p>
+                  <div className="security-env-grid">
+                    <div className="env-grid-item">
+                      <code>GEMINI_API_KEY</code>
+                      <span>Google AI Gemini API key</span>
+                    </div>
+                    <div className="env-grid-item">
+                      <code>SUPABASE_URL</code>
+                      <span>Supabase Project URL</span>
+                    </div>
+                    <div className="env-grid-item">
+                      <code>SUPABASE_KEY</code>
+                      <span>Supabase <code>service_role</code> or <code>anon</code> key</span>
+                    </div>
+                    <div className="env-grid-item">
+                      <code>SUPABASE_BUCKET</code>
+                      <span>Optional bucket name (default: <code>documents</code>)</span>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={verifyKey}
-                    disabled={isVerifying}
-                  >
-                    {isVerifying ? 'Verifying...' : 'Test Key'}
-                  </button>
-                  <button type="button" className="btn-primary" onClick={() => saveSettings()}>
-                    Save & Close
+                  <button type="button" className="btn-primary" onClick={() => setIsSettingsOpen(false)}>
+                    Close
                   </button>
                 </div>
               </div>
             ) : (
               <div>
-                <div className="toggle-group">
-                  <div>
-                    <strong style={{ fontSize: 13.5, color: '#111b21' }}>Enable Supabase Cloud Storage</strong>
-                    <div style={{ fontSize: 12, color: '#667781', marginTop: 2 }}>
-                      Upload files to Supabase Bucket & persist metadata in Supabase DB
-                    </div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={isSupabaseEnabled}
-                    onChange={(e) => setIsSupabaseEnabled(e.target.checked)}
-                    style={{ width: 18, height: 18, cursor: 'pointer', accentColor: '#00a884' }}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Supabase Project URL</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="https://xyzcompany.supabase.co"
-                    value={supabaseUrl}
-                    onChange={(e) => setSupabaseUrl(e.target.value)}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">
-                    Supabase API Key (Use <code>service_role</code> secret key, or <code>anon</code> key with storage policies)
-                  </label>
-                  <input
-                    type="password"
-                    className="form-input"
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    value={supabaseKey}
-                    onChange={(e) => setSupabaseKey(e.target.value)}
-                  />
-                  <div style={{ fontSize: 11.5, color: '#667781', marginTop: 4 }}>
-                    Tip: The <code>service_role</code> key (found in Supabase Settings → API) has full storage permissions without needing custom policies.
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label">Storage Bucket Name</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="documents"
-                    value={supabaseBucket}
-                    onChange={(e) => setSupabaseBucket(e.target.value)}
-                  />
-                  <div style={{ fontSize: 11.5, color: '#667781', marginTop: 4 }}>
-                    Files will be uploaded to this bucket and streamed on retrieval.
-                  </div>
-                </div>
-
-                {supabaseStatus && (
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      marginTop: 8,
-                      color: supabaseStatus.includes('✓') ? '#00a884' : '#e53935',
-                    }}
-                  >
-                    {supabaseStatus}
-                  </div>
-                )}
+                <p style={{ fontSize: 13, color: '#667781', marginBottom: 12, lineHeight: 1.5 }}>
+                  Run this SQL query in your <strong>Supabase Dashboard → SQL Editor</strong> to automatically create the metadata table and storage bucket access policies:
+                </p>
 
                 {/* SQL Table & Storage Policies Creation Guide */}
                 <div className="sql-container">
@@ -1128,21 +915,8 @@ FOR DELETE USING (bucket_id = 'documents');`}
                 </div>
 
                 <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={testSupabaseConnection}
-                    disabled={isTestingSupabase}
-                  >
-                    {isTestingSupabase ? 'Testing...' : 'Test Connection'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={saveSupabaseConfig}
-                    disabled={isTestingSupabase}
-                  >
-                    Save & Sync
+                  <button type="button" className="btn-primary" onClick={() => setIsSettingsOpen(false)}>
+                    Close
                   </button>
                 </div>
               </div>

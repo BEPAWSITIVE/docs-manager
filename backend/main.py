@@ -215,7 +215,7 @@ async def upload_document(
     if not effective_key:
         raise HTTPException(
             status_code=400,
-            detail="Gemini API Key is required to analyze this document. Please enter your API key in Settings (⚙️) first.",
+            detail="Gemini API Key is required to analyze this document. Please set GEMINI_API_KEY in your server environment variables.",
         )
 
     # 2. Determine file extension
