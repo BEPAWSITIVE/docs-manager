@@ -7,22 +7,28 @@
 
 html, body {
   height: 100%;
+  height: 100dvh;
   width: 100%;
+  width: 100dvw;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #111b21;
   background-color: #0c1317;
   overflow: hidden;
   user-select: none;
+  -webkit-text-size-adjust: 100%;
 }
 
 /* Chrome / Browser Window Wrapper */
 .browser-window {
   display: flex;
   flex-direction: column;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  width: 100dvw;
+  height: 100%;
+  height: 100dvh;
   background-color: #ffffff;
   overflow: hidden;
+  position: relative;
 }
 
 /* ==========================================================================
@@ -31,8 +37,11 @@ html, body {
 .app-container {
   display: flex;
   flex: 1;
-  height: calc(100vh - 80px);
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
   overflow: hidden;
+  position: relative;
 }
 
 /* 1. Far-Left Navigation Rail (#004838) */
@@ -103,7 +112,17 @@ html, body {
 }
 
 .sidebar-header {
-  padding: 18px 20px 14px 20px;
+  height: 60px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #f0f2f5;
+  border-bottom: 1px solid #e9edef;
+  flex-shrink: 0;
+}
+
+.sidebar-brand-wrapper {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -579,6 +598,7 @@ html, body {
   left: 0;
   right: 0;
   padding: 12px 24px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 12px;
@@ -956,4 +976,225 @@ html, body {
 .env-grid-item span {
   color: #667781;
 }
+
+/* ==========================================================================
+   NAVIGATION & ACTION BUTTONS
+   ========================================================================== */
+.mobile-back-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: #54656f;
+  cursor: pointer;
+  padding: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s;
+}
+
+.mobile-back-btn:active {
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+.top-action-btn {
+  background: none;
+  border: none;
+  color: #54656f;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.top-action-btn:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #111b21;
+}
+
+.mobile-sidebar-settings-btn {
+  display: none;
+}
+
+/* ==========================================================================
+   RESPONSIVE DESIGN (MOBILE & TABLET BREAKPOINTS)
+   ========================================================================== */
+@media (max-width: 767px) {
+  .nav-rail {
+    display: none !important;
+  }
+
+  .mobile-back-btn {
+    display: flex !important;
+  }
+
+  .mobile-sidebar-settings-btn {
+    display: flex !important;
+  }
+
+  /* Mobile Single-View Switching */
+  .app-container.mobile-show-chat .sidebar-panel {
+    display: none !important;
+  }
+
+  .app-container.mobile-show-chat .chat-window {
+    display: flex !important;
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+
+  .app-container.mobile-show-sidebar .chat-window {
+    display: none !important;
+  }
+
+  .app-container.mobile-show-sidebar .sidebar-panel {
+    display: flex !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    border-right: none;
+  }
+
+  .chat-top-bar {
+    height: 56px;
+    padding: 0 12px;
+  }
+
+  .chat-top-left {
+    gap: 8px;
+  }
+
+  .top-avatar {
+    width: 38px;
+    height: 38px;
+  }
+
+  .top-name {
+    font-size: 15px;
+  }
+
+  .top-status {
+    font-size: 11px;
+  }
+
+  .messages-container {
+    padding: 12px 10px 84px 10px;
+    gap: 8px;
+  }
+
+  .bubble {
+    max-width: 90%;
+    font-size: 14px;
+  }
+
+  .document-card {
+    min-width: 0;
+    width: 100%;
+    gap: 10px;
+    padding: 4px 0;
+  }
+
+  .doc-info {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .doc-name {
+    font-size: 13.5px;
+    word-break: break-all;
+  }
+
+  .doc-meta {
+    font-size: 11px;
+  }
+
+  .doc-image-wrapper {
+    width: calc(100% + 24px);
+    max-width: none;
+  }
+
+  .doc-image-wrapper img {
+    max-height: 240px;
+  }
+
+  .chat-input-bar {
+    padding: 8px 10px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    gap: 8px;
+    background-color: rgba(240, 242, 245, 0.98);
+    backdrop-filter: blur(8px);
+  }
+
+  .input-pill-wrapper {
+    padding: 8px 14px;
+  }
+
+  .chat-input-text {
+    font-size: 16px; /* Prevents auto-zoom on iOS Safari */
+  }
+
+  .send-circle-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .action-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Modal on Mobile */
+  .modal-overlay {
+    padding: 10px;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    padding: 18px 14px;
+    border-radius: 12px;
+  }
+
+  .modal-title {
+    font-size: 16px;
+  }
+
+  .modal-tabs {
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+
+  .modal-tab-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .settings-service-card {
+    padding: 12px 10px;
+  }
+
+  .service-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .env-grid-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .sql-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+}
+
 

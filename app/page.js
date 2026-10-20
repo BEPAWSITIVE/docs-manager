@@ -11,6 +11,7 @@ export default function DocsManagerPage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [storedDocs, setStoredDocs] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [mobileView, setMobileView] = useState('chat'); // 'chat' | 'sidebar'
 
   // Supabase Server Status State
   const [supabaseBucket, setSupabaseBucket] = useState('documents');
@@ -411,11 +412,11 @@ FOR DELETE USING (bucket_id = 'documents');`;
       onDrop={handleDrop}
     >
       {/* 3-Panel Main Layout */}
-      <div className="app-container">
+      <div className={`app-container ${mobileView === 'sidebar' ? 'mobile-show-sidebar' : 'mobile-show-chat'}`}>
         {/* 1. Far-Left Navigation Rail (#004838) */}
         <div className="nav-rail">
           <div className="rail-top">
-            <button className="rail-btn active" title="Chats">
+            <button className="rail-btn active" title="Chats" onClick={() => setMobileView('sidebar')}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2 22l5.197-1.309A9.957 9.957 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z" />
               </svg>
@@ -439,22 +440,35 @@ FOR DELETE USING (bucket_id = 'documents');`;
         {/* 2. Left Sidebar (White #ffffff) */}
         <div className="sidebar-panel">
           <div className="sidebar-header">
-            <div className="app-brand-logo">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
-                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
-              </svg>
+            <div className="sidebar-brand-wrapper">
+              <div className="app-brand-logo">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="white">
+                  <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
+                </svg>
+              </div>
+              <div className="app-brand-title">Docs Manager</div>
+              {isSupabaseEnabled && (
+                <span className="cloud-status-pill" title="Supabase Storage & Metadata Connected">
+                  ☁️ Cloud
+                </span>
+              )}
             </div>
-            <div className="app-brand-title">Docs Manager</div>
-            {isSupabaseEnabled && (
-              <span className="cloud-status-pill" title="Supabase Storage & Metadata Connected">
-                ☁️ Cloud
-              </span>
-            )}
+            <button
+              className="top-action-btn mobile-sidebar-settings-btn"
+              title="Settings"
+              onClick={() => setIsSettingsOpen(true)}
+              aria-label="Settings"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
           </div>
 
 
           <div className="chat-list">
-            <div className="chat-item active">
+            <div className="chat-item active" onClick={() => setMobileView('chat')}>
               <div className="chat-avatar-round">
                 <RobotAvatar />
               </div>
@@ -492,26 +506,41 @@ FOR DELETE USING (bucket_id = 'documents');`;
           {/* Top Bar */}
           <div className="chat-top-bar">
             <div className="chat-top-left">
-              <div className="top-avatar">
+              <button
+                type="button"
+                className="mobile-back-btn"
+                title="Back to chats"
+                onClick={() => setMobileView('sidebar')}
+                aria-label="Back to chats"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="19" y1="12" x2="5" y2="12"></line>
+                  <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+              </button>
+              <div className="top-avatar" onClick={() => setMobileView('sidebar')} style={{ cursor: 'pointer' }}>
                 <RobotAvatar />
               </div>
-              <div>
+              <div onClick={() => setMobileView('sidebar')} style={{ cursor: 'pointer' }}>
                 <div className="top-name">Docs Manager</div>
                 <div className="top-status">
-                  Online {isSupabaseEnabled ? '• ☁️ Supabase Cloud Active' : '• Local Vault'}
+                  Online {isSupabaseEnabled ? '• ☁️ Cloud' : '• Local'}
                 </div>
               </div>
             </div>
             <div className="chat-top-actions">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="5" r="2" />
-                <circle cx="12" cy="12" r="2" />
-                <circle cx="12" cy="19" r="2" />
-              </svg>
+              <button
+                type="button"
+                className="top-action-btn"
+                title="Settings"
+                onClick={() => setIsSettingsOpen(true)}
+                aria-label="Settings"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </button>
             </div>
           </div>
 
