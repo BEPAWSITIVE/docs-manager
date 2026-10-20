@@ -168,6 +168,26 @@ def upload_to_supabase_bucket(
             "bucket": bucket_name,
         }
     except Exception as e:
+        err_msg = str(e)
+        if "not found" in err_msg.lower() or "404" in err_msg:
+            # Auto-create public bucket with service_role privileges and retry
+            try:
+                client.storage.create_bucket(bucket_name, options={"public": True})
+                client.storage.from_(bucket_name).upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options={"content-type": mime_type, "upsert": "true"},
+                )
+                public_url = client.storage.from_(bucket_name).get_public_url(storage_path)
+                return {
+                    "storage_path": storage_path,
+                    "storage_url": public_url,
+                    "bucket": bucket_name,
+                }
+            except Exception as retry_err:
+                print(f"[Supabase] Auto-create bucket error: {retry_err}")
+                raise RuntimeError(f"Supabase bucket upload failed: {retry_err}")
+
         print(f"[Supabase] Upload error: {e}")
         raise RuntimeError(f"Supabase bucket upload failed: {str(e)}")
 
