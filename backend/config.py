@@ -20,11 +20,11 @@ except Exception:
     pass
 
 # Default Models
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-flash-latest"
 SUPPORTED_MODELS = [
+    "gemini-flash-latest",
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
     "gemini-2.5-pro",
 ]
 

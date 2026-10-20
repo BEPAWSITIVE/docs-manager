@@ -6,7 +6,7 @@ export default function DocsManagerPage() {
   // State
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
+  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest');
   const [hasBackendKey, setHasBackendKey] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [storedDocs, setStoredDocs] = useState([]);
@@ -176,6 +176,30 @@ FOR DELETE USING (bucket_id = 'documents');`;
   // Generic File Upload Function
   const uploadFile = async (file) => {
     if (!file) return;
+
+    // Vercel Serverless Functions have a strict 4.5 MB request payload limit
+    if (file.size > 4.5 * 1024 * 1024) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          role: 'user',
+          type: 'upload',
+          filename: file.name,
+          size: `${formatFileSize(file.size)} • ${file.name.includes('.') ? file.name.split('.').pop().toUpperCase() : 'FILE'}`,
+          time: getFormatTime(),
+        },
+        {
+          id: Date.now() + 1,
+          role: 'assistant',
+          type: 'text',
+          content: `⚠️ Upload failed: File size (${sizeMB} MB) exceeds Vercel's 4.5 MB serverless limit. Please compress or upload files under 4.5 MB.`,
+          time: getFormatTime(),
+        },
+      ]);
+      return;
+    }
 
     const timeNow = getFormatTime();
     const extUpper = file.name.includes('.') ? file.name.split('.').pop().toUpperCase() : 'FILE';
@@ -772,9 +796,9 @@ FOR DELETE USING (bucket_id = 'documents');`;
                       value={selectedModel}
                       onChange={(e) => handleModelChange(e.target.value)}
                     >
-                      <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
+                      <option value="gemini-flash-latest">gemini-flash-latest (Recommended)</option>
                       <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                      <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+                      <option value="gemini-2.5-flash">gemini-2.5-flash</option>
                       <option value="gemini-2.5-pro">gemini-2.5-pro</option>
                     </select>
                   </div>

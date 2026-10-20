@@ -141,17 +141,42 @@ def delete_document(doc_id: str) -> bool:
     return False
 
 
+STOP_WORDS = {
+    "ka", "ki", "ke", "ko", "se", "me", "mein", "par", "pe",
+    "dena", "dijiye", "do", "bhejo", "chahiye", "hai", "karo", "dikhao", "batao",
+    "the", "a", "an", "is", "of", "in", "to", "for", "with", "and", "or",
+    "my", "me", "give", "show", "get", "find", "search", "please", "send",
+    "card", "document", "doc", "file"
+}
+
+SYNONYMS = {
+    "aadhar": "aadhaar",
+    "adhar": "aadhaar",
+    "aadhaar": "aadhaar",
+    "pan": "pan",
+    "pancard": "pan",
+}
+
+
 def fallback_keyword_search(query: str) -> Optional[Dict[str, Any]]:
     """
     Deterministic scoring fallback to find best matching document
-    if Gemini API matching is unavailable or as a baseline.
+    if Gemini API matching is unavailable.
     """
+    import re
+
     docs = list_documents()
     if not docs:
         return None
 
-    query_tokens = [w.lower().strip() for w in query.split() if len(w.strip()) > 1]
-    if not query_tokens:
+    raw_tokens = [w.lower().strip(".,!?\"'()[]{}") for w in query.split()]
+    meaningful_tokens = [
+        SYNONYMS.get(w, w)
+        for w in raw_tokens
+        if len(w) > 1 and w not in STOP_WORDS
+    ]
+
+    if not meaningful_tokens:
         return None
 
     best_score = 0
@@ -163,29 +188,65 @@ def fallback_keyword_search(query: str) -> Optional[Dict[str, Any]]:
         doc_type = analysis.get("document_type", "").lower()
         person_name = analysis.get("person_name", "").lower()
         doc_num = analysis.get("document_number", "").lower()
-        keywords = [k.lower() for k in analysis.get("searchable_keywords", [])]
-        summary = analysis.get("short_summary", "").lower()
+        keywords = [SYNONYMS.get(k.lower(), k.lower()) for k in analysis.get("searchable_keywords", [])]
         orig_name = doc.get("original_filename", "").lower()
 
-        combined_text = f"{doc_type} {person_name} {doc_num} {' '.join(keywords)} {summary} {orig_name}"
+        # Extract words for whole-token exact matching (prevents "ka" matching "kabeer")
+        doc_type_words = set(re.findall(r"\w+", doc_type))
+        person_words = set(re.findall(r"\w+", person_name))
+        orig_name_words = set(re.findall(r"\w+", orig_name))
+        all_keyword_words = set()
+        for kw in keywords:
+            all_keyword_words.update(re.findall(r"\w+", kw))
 
-        for token in query_tokens:
-            if token in person_name:
-                score += 5
-            if token in doc_type:
+        has_name_match = False
+
+        for token in meaningful_tokens:
+            norm_token = SYNONYMS.get(token, token)
+
+            # 1. Exact match in person name
+            if norm_token in person_words:
+                score += 15
+                has_name_match = True
+
+            # 2. Match in document category / type
+            if norm_token in doc_type_words:
+                score += 12
+            elif any(norm_token in w for w in doc_type_words if len(norm_token) >= 4):
+                score += 6
+
+            # 3. Match in keywords
+            if norm_token in all_keyword_words:
+                score += 8
+            elif any(norm_token in kw for kw in keywords if len(norm_token) >= 4):
                 score += 4
-            if token in doc_num:
-                score += 4
-            if any(token in kw for kw in keywords):
-                score += 3
-            if token in combined_text:
-                score += 1
+
+            # 4. Match in original filename (e.g. adhar and pan.pdf -> matches "aadhaar", "pan")
+            if norm_token in orig_name_words:
+                score += 10
+            elif norm_token in orig_name and len(norm_token) >= 4:
+                score += 6
+
+            # 5. Document number
+            if norm_token in doc_num and len(norm_token) >= 4:
+                score += 12
+
+        # Person name safety guard: If user searched for a specific named person
+        # but this document belongs to a DIFFERENT person, penalize heavily so
+        # we never return someone else's document (e.g. Kabeer's quotation for Deepak)
+        if person_name and not has_name_match:
+            for token in meaningful_tokens:
+                if (
+                    token not in doc_type_words
+                    and token not in {"aadhaar", "pan", "passport", "license", "marksheet", "invoice", "quotation", "banner", "poster"}
+                ):
+                    score -= 15
 
         if score > best_score:
             best_score = score
             best_doc = doc
 
-    # Only return if there was a meaningful match score
-    if best_score >= 3:
+    # Meaningful match requires at least 6 points
+    if best_score >= 6:
         return best_doc
     return None
