@@ -4,10 +4,14 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from supabase import create_client, Client
+from supabase.lib.client_options import SyncClientOptions
 
 from backend.config import STORAGE_DIR
 
 SUPABASE_CONFIG_FILE = STORAGE_DIR / "supabase_config.json"
+
+_supabase_client_instance: Optional[Client] = None
+_last_supabase_key: Optional[str] = None
 
 
 def get_supabase_config() -> Dict[str, Any]:
@@ -71,12 +75,22 @@ def set_supabase_config(url: str, key: str, bucket: str = "documents", enabled: 
 
 
 def get_client() -> Optional[Client]:
-    """Returns an authenticated Supabase client if configured."""
+    """Returns an authenticated Supabase client singleton with safe timeouts."""
+    global _supabase_client_instance, _last_supabase_key
     cfg = get_supabase_config()
     if not cfg.get("enabled") or not cfg.get("url") or not cfg.get("key"):
         return None
+
+    cache_key = f"{cfg['url']}::{cfg['key']}"
+    if _supabase_client_instance is not None and _last_supabase_key == cache_key:
+        return _supabase_client_instance
+
     try:
-        return create_client(cfg["url"], cfg["key"])
+        # Enforce 5s postgrest timeout and 8s storage timeout to prevent Vercel 504 timeouts
+        opts = SyncClientOptions(postgrest_client_timeout=5, storage_client_timeout=8)
+        _supabase_client_instance = create_client(cfg["url"], cfg["key"], options=opts)
+        _last_supabase_key = cache_key
+        return _supabase_client_instance
     except Exception as e:
         print(f"[Supabase] Client init error: {e}")
         return None

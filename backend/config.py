@@ -19,13 +19,11 @@ try:
 except Exception:
     pass
 
-# Default Models
-DEFAULT_MODEL = "gemini-flash-latest"
+# Default Models (Fastest & Active Google AI Studio Models)
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 SUPPORTED_MODELS = [
-    "gemini-flash-latest",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-pro",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
 ]
 
 # Supported file extensions (None means all formats accepted)

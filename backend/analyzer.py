@@ -8,18 +8,40 @@ from google.genai import types
 
 from backend.config import DEFAULT_MODEL
 
+# Fastest, most reliable and active models on Google AI Studio
 FALLBACK_MODELS = [
-    "gemini-flash-latest",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
 ]
+
+_client_cache: Dict[str, genai.Client] = {}
+
+
+def get_genai_client(api_key: str) -> genai.Client:
+    """
+    Returns a cached Gemini client with tenacity retries disabled (attempts=1).
+    This ensures that quota (429) or transient errors fail immediately (in <0.5s)
+    so our fallback logic can instantly try the next model without hitting Vercel timeouts.
+    """
+    cleaned_key = api_key.strip()
+    if cleaned_key not in _client_cache:
+        http_opts = types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=1)
+        )
+        _client_cache[cleaned_key] = genai.Client(api_key=cleaned_key, http_options=http_opts)
+    return _client_cache[cleaned_key]
 
 
 def _get_model_candidates(preferred: Optional[str] = None) -> List[str]:
-    """Generates an ordered list of candidate models for fallback tolerance."""
+    """
+    Generates an ordered list of candidate models.
+    Prioritizes active, quota-safe models (gemini-3.5-flash-lite).
+    """
     candidates = []
-    if preferred and preferred.strip():
+    # If preferred model is in our verified working models list, honor it
+    if preferred and preferred.strip() in FALLBACK_MODELS:
         candidates.append(preferred.strip())
+    # Always include verified models
     for m in FALLBACK_MODELS:
         if m not in candidates:
             candidates.append(m)
@@ -40,9 +62,10 @@ def validate_api_key(api_key: str, model_name: str = DEFAULT_MODEL) -> bool:
     if not api_key or not api_key.strip():
         return False
     try:
-        client = genai.Client(api_key=api_key.strip())
+        client = get_genai_client(api_key)
+        candidate_model = model_name if model_name in FALLBACK_MODELS else DEFAULT_MODEL
         response = client.models.generate_content(
-            model=model_name,
+            model=candidate_model,
             contents="Respond with 'OK'",
         )
         return bool(response and response.text)
@@ -90,7 +113,7 @@ def analyze_document(
         return default_fallback
 
     try:
-        client = genai.Client(api_key=effective_key)
+        client = get_genai_client(effective_key)
 
         is_visual = (
             mime_type.startswith("image/")
@@ -156,7 +179,6 @@ def analyze_document(
                     keywords = parsed.get("searchable_keywords", [])
                     if isinstance(keywords, str):
                         keywords = [k.strip() for k in keywords.split(",")]
-                    # Include filename tokens
                     filename_tokens = [w.lower() for w in re.findall(r"\w+", stem_name) if len(w) > 2]
                     keywords.extend(filename_tokens)
                     keywords.append(stem_name.lower())
@@ -182,7 +204,7 @@ def find_matching_document(
     Uses Gemini AI to intelligently match a natural language query
     (e.g. 'Give me Shivam\'s Aadhar card' or 'Shivam ka aadhar dena')
     strictly against structured document metadata stored in Supabase.
-    No local fallback.
+    Ultra-fast execution: uses gemini-3.5-flash-lite without retry backoff to avoid Vercel timeouts.
     """
     if not documents:
         return None
@@ -227,9 +249,10 @@ def find_matching_document(
     )
 
     models_to_try = _get_model_candidates(model_name)
+    client = get_genai_client(effective_key)
+
     for current_model in models_to_try:
         try:
-            client = genai.Client(api_key=effective_key)
             response = client.models.generate_content(
                 model=current_model,
                 contents=prompt,
@@ -253,5 +276,4 @@ def find_matching_document(
             print(f"[analyzer.find_matching_document] Model '{current_model}' failed: {model_err}. Trying fallback...")
             continue
 
-    # Pure AI matching: if AI fails or no match, return None
     return None

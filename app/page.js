@@ -6,7 +6,7 @@ export default function DocsManagerPage() {
   // State
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest');
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash-lite');
   const [hasBackendKey, setHasBackendKey] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [storedDocs, setStoredDocs] = useState([]);
@@ -50,7 +50,12 @@ export default function DocsManagerPage() {
       }
 
       const savedModel = localStorage.getItem('gemini_model');
-      if (savedModel) setSelectedModel(savedModel);
+      if (savedModel && ['gemini-3.5-flash-lite', 'gemini-3.5-flash'].includes(savedModel)) {
+        setSelectedModel(savedModel);
+      } else {
+        setSelectedModel('gemini-3.5-flash-lite');
+        localStorage.setItem('gemini_model', 'gemini-3.5-flash-lite');
+      }
 
       fetchStoredDocuments();
     };
@@ -796,10 +801,8 @@ FOR DELETE USING (bucket_id = 'documents');`;
                       value={selectedModel}
                       onChange={(e) => handleModelChange(e.target.value)}
                     >
-                      <option value="gemini-flash-latest">gemini-flash-latest (Recommended)</option>
-                      <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                      <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                      <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+                      <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Ultra Fast & Recommended)</option>
+                      <option value="gemini-3.5-flash">gemini-3.5-flash</option>
                     </select>
                   </div>
                 </div>
