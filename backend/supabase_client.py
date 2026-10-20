@@ -5,30 +5,46 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
-from backend.config import STORAGE_DIR, DOCUMENTS_DIR
+from backend.config import STORAGE_DIR
 
 SUPABASE_CONFIG_FILE = STORAGE_DIR / "supabase_config.json"
 
 
 def get_supabase_config() -> Dict[str, Any]:
-    """Reads persistent Supabase configuration."""
+    """
+    Reads Supabase configuration from environment variables or persistent config file.
+    Automatically enabled if SUPABASE_URL and SUPABASE_KEY are set.
+    """
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = os.getenv("SUPABASE_KEY", "").strip()
+    bucket = os.getenv("SUPABASE_BUCKET", "documents").strip() or "documents"
+
+    # Default to enabled if both URL and Key are in environment variables
+    is_enabled = bool(url and key)
+
     config = {
-        "enabled": False,
-        "url": os.getenv("SUPABASE_URL", "").strip(),
-        "key": os.getenv("SUPABASE_KEY", "").strip(),
-        "bucket": os.getenv("SUPABASE_BUCKET", "documents").strip() or "documents",
+        "enabled": is_enabled,
+        "url": url,
+        "key": key,
+        "bucket": bucket,
     }
+
     if SUPABASE_CONFIG_FILE.exists():
         try:
             saved = json.loads(SUPABASE_CONFIG_FILE.read_text(encoding="utf-8"))
             if isinstance(saved, dict):
-                config.update(saved)
+                if saved.get("url"):
+                    config["url"] = saved["url"].strip()
+                if saved.get("key"):
+                    config["key"] = saved["key"].strip()
+                if saved.get("bucket"):
+                    config["bucket"] = saved["bucket"].strip()
+                if "enabled" in saved:
+                    config["enabled"] = bool(saved["enabled"] and config["url"] and config["key"])
+                else:
+                    config["enabled"] = bool(config["url"] and config["key"])
         except Exception:
             pass
-
-    # Auto-enable if URL and KEY are set
-    if config.get("url") and config.get("key") and "enabled" not in config:
-        config["enabled"] = True
 
     return config
 
@@ -36,13 +52,16 @@ def get_supabase_config() -> Dict[str, Any]:
 def set_supabase_config(url: str, key: str, bucket: str = "documents", enabled: bool = True) -> Dict[str, Any]:
     """Saves Supabase configuration."""
     cfg = {
-        "enabled": enabled,
+        "enabled": bool(enabled and url.strip() and key.strip()),
         "url": url.strip(),
         "key": key.strip(),
         "bucket": (bucket.strip() or "documents"),
     }
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    SUPABASE_CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        SUPABASE_CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
     # Update process env
     os.environ["SUPABASE_URL"] = cfg["url"]
@@ -81,13 +100,13 @@ def test_connection(url: str, key: str, bucket: str = "documents") -> Dict[str, 
                     client.storage.create_bucket(bucket_name, options={"public": True})
                     bucket_ready = True
                 except Exception:
-                    # Might not have permission to create bucket, but can access
+                    # Might not have permission to create bucket, but can access if it exists
                     bucket_ready = True
             else:
                 bucket_ready = True
         except Exception as bex:
             print(f"[Supabase] Storage check notice: {bex}")
-            bucket_ready = True  # Proceed, bucket may exist
+            bucket_ready = True
 
         # 2. Test DB table access (documents_metadata)
         table_ready = False
@@ -111,25 +130,23 @@ def upload_to_supabase_bucket(
     file_bytes: bytes,
     saved_filename: str,
     mime_type: str,
-) -> Optional[Dict[str, str]]:
+) -> Dict[str, str]:
     """Uploads file bytes directly to the Supabase storage bucket."""
     client = get_client()
     if not client:
-        return None
+        raise RuntimeError("Supabase client is not connected. Check SUPABASE_URL and SUPABASE_KEY.")
 
     cfg = get_supabase_config()
     bucket_name = cfg.get("bucket", "documents")
     storage_path = f"uploads/{saved_filename}"
 
     try:
-        # Upload with upsert=true
         client.storage.from_(bucket_name).upload(
             path=storage_path,
             file=file_bytes,
             file_options={"content-type": mime_type, "upsert": "true"},
         )
 
-        # Get public URL
         public_url = client.storage.from_(bucket_name).get_public_url(storage_path)
         return {
             "storage_path": storage_path,
@@ -138,7 +155,7 @@ def upload_to_supabase_bucket(
         }
     except Exception as e:
         print(f"[Supabase] Upload error: {e}")
-        return None
+        raise RuntimeError(f"Supabase bucket upload failed: {str(e)}")
 
 
 def download_from_supabase_bucket(storage_path: str) -> Optional[bytes]:
@@ -173,17 +190,17 @@ def delete_from_supabase_bucket(storage_path: str) -> bool:
 
 
 def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
-    """Saves metadata record to Supabase documents_metadata table."""
+    """Saves structured metadata record to Supabase documents_metadata table."""
     client = get_client()
     if not client:
-        return False
+        raise RuntimeError("Supabase client is not connected. Check SUPABASE_URL and SUPABASE_KEY.")
 
     analysis = record.get("analysis", {})
     row = {
         "doc_id": record.get("doc_id"),
         "original_filename": record.get("original_filename"),
         "saved_filename": record.get("saved_filename"),
-        "storage_path": record.get("storage_path") or record.get("saved_filename"),
+        "storage_path": record.get("storage_path") or f"uploads/{record.get('saved_filename')}",
         "storage_url": record.get("storage_url") or "",
         "mime_type": record.get("mime_type"),
         "file_size_bytes": record.get("file_size_bytes", 0),
@@ -202,14 +219,14 @@ def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
         return True
     except Exception as e:
         print(f"[Supabase] DB Upsert error: {e}")
-        return False
+        raise RuntimeError(f"Supabase DB insert error: {str(e)}")
 
 
-def get_all_metadata_from_supabase_db() -> Optional[List[Dict[str, Any]]]:
-    """Retrieves all document metadata records from Supabase."""
+def get_all_metadata_from_supabase_db() -> List[Dict[str, Any]]:
+    """Retrieves all document metadata records directly from Supabase PostgreSQL table."""
     client = get_client()
     if not client:
-        return None
+        return []
 
     try:
         res = client.table("documents_metadata").select("*").order("created_at", desc=True).execute()
@@ -217,14 +234,12 @@ def get_all_metadata_from_supabase_db() -> Optional[List[Dict[str, Any]]]:
         docs = []
         for r in rows:
             saved_fn = r.get("saved_filename") or f"{r.get('doc_id')}.bin"
-            local_file = DOCUMENTS_DIR / saved_fn
             doc_record = {
                 "doc_id": r.get("doc_id"),
                 "original_filename": r.get("original_filename") or saved_fn,
                 "saved_filename": saved_fn,
                 "storage_path": r.get("storage_path") or f"uploads/{saved_fn}",
                 "storage_url": r.get("storage_url") or "",
-                "file_path": str(local_file),
                 "mime_type": r.get("mime_type") or "application/octet-stream",
                 "file_size_bytes": r.get("file_size_bytes", 0),
                 "created_at": r.get("created_at"),
@@ -242,6 +257,43 @@ def get_all_metadata_from_supabase_db() -> Optional[List[Dict[str, Any]]]:
         return docs
     except Exception as e:
         print(f"[Supabase] DB Fetch error: {e}")
+        return []
+
+
+def get_metadata_by_id_from_supabase_db(doc_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieves a single document metadata record by doc_id directly from Supabase."""
+    client = get_client()
+    if not client:
+        return None
+
+    try:
+        res = client.table("documents_metadata").select("*").eq("doc_id", doc_id).limit(1).execute()
+        rows = res.data or []
+        if not rows:
+            return None
+        r = rows[0]
+        saved_fn = r.get("saved_filename") or f"{r.get('doc_id')}.bin"
+        return {
+            "doc_id": r.get("doc_id"),
+            "original_filename": r.get("original_filename") or saved_fn,
+            "saved_filename": saved_fn,
+            "storage_path": r.get("storage_path") or f"uploads/{saved_fn}",
+            "storage_url": r.get("storage_url") or "",
+            "mime_type": r.get("mime_type") or "application/octet-stream",
+            "file_size_bytes": r.get("file_size_bytes", 0),
+            "created_at": r.get("created_at"),
+            "analysis": {
+                "document_type": r.get("document_type", "Document"),
+                "person_name": r.get("person_name", ""),
+                "document_number": r.get("document_number", ""),
+                "issuing_authority": r.get("issuing_authority", ""),
+                "dob": r.get("dob", ""),
+                "searchable_keywords": r.get("searchable_keywords") or [],
+                "short_summary": r.get("short_summary", ""),
+            },
+        }
+    except Exception as e:
+        print(f"[Supabase] DB Fetch by ID error: {e}")
         return None
 
 

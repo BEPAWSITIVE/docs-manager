@@ -5,19 +5,15 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from backend.config import (
-    DOCUMENTS_DIR,
-    DEFAULT_MODEL,
-    ALLOWED_EXTENSIONS,
-)
+from backend.config import DEFAULT_MODEL
 from backend import config, database, analyzer, supabase_client
 
 app = FastAPI(
     title="Docs Manager API",
-    description="FastAPI Backend for Document Storage, Intelligent Extraction & Retrieval",
+    description="FastAPI Backend for Cloud Document Storage, Intelligent Extraction & Retrieval",
     version="1.0.0",
 )
 
@@ -45,12 +41,13 @@ class ConfigRequest(BaseModel):
 @app.get("/")
 def root():
     sb_cfg = supabase_client.get_supabase_config()
+    docs = database.list_documents()
     return {
         "app": "Docs Manager API",
         "status": "online",
         "has_api_key": bool(config.get_api_key()),
         "supabase_enabled": bool(sb_cfg.get("enabled")),
-        "documents_count": len(database.list_documents()),
+        "documents_count": len(docs),
     }
 
 
@@ -75,8 +72,6 @@ def set_config(payload: ConfigRequest):
     valid = analyzer.validate_api_key(key, payload.model or DEFAULT_MODEL)
     if valid:
         config.set_api_key(key)
-        # Reanalyze any pending documents
-        reanalyze_unclassified()
         return {"valid": True, "message": "API Key saved and active!"}
     return {"valid": False, "message": "Invalid API Key. Please verify."}
 
@@ -88,7 +83,6 @@ def test_gemini_key(payload: ConfigRequest):
     valid = analyzer.validate_api_key(key, payload.model or DEFAULT_MODEL)
     if valid:
         config.set_api_key(key)
-        reanalyze_unclassified()
         return {"valid": True, "message": "API Key is valid and saved!"}
     return {
         "valid": False,
@@ -162,39 +156,6 @@ def test_supabase_endpoint(payload: SupabaseConfigRequest):
     return res
 
 
-def reanalyze_unclassified():
-    """Background helper to reanalyze documents with missing person names."""
-    key = config.get_api_key()
-    if not key:
-        return
-    docs = database.list_documents()
-    for d in docs:
-        analysis = d.get("analysis", {})
-        # If person_name is empty or doc_type looks like a fallback hash
-        if not analysis.get("person_name") or analysis.get("document_type", "").lower() == d.get("doc_id", "").lower():
-            file_path = Path(d.get("file_path", ""))
-            if file_path.exists():
-                try:
-                    new_analysis = analyzer.analyze_document(
-                        file_path=file_path,
-                        mime_type=d.get("mime_type", "image/jpeg"),
-                        api_key=key,
-                        model_name=DEFAULT_MODEL,
-                    )
-                    if new_analysis.get("document_type") != file_path.stem.replace("_", " ").title():
-                        database.save_document(
-                            doc_id=d["doc_id"],
-                            original_filename=d["original_filename"],
-                            saved_filename=d["saved_filename"],
-                            file_path=file_path,
-                            mime_type=d.get("mime_type", "image/jpeg"),
-                            file_size_bytes=d.get("file_size_bytes", 0),
-                            analysis=new_analysis,
-                        )
-                except Exception as ex:
-                    print(f"Reanalysis error for {d['doc_id']}: {ex}")
-
-
 @app.post("/api/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -203,78 +164,89 @@ async def upload_document(
     x_gemini_key: Optional[str] = Header(None),
 ):
     """
-    Receives an uploaded document/image, analyzes it with Gemini Vision/OCR,
-    and stores its classified metadata and file separately.
+    Receives an uploaded document/image:
+    1. AI analyzes it with Gemini Multimodal OCR to extract structured metadata.
+    2. Uploads binary file directly to Supabase Storage Bucket.
+    3. Saves structured metadata record to Supabase PostgreSQL table.
+    No local storage fallback.
     """
-    # 1. Resolve and persist API key
+    # 1. Check Gemini API key
     if api_key and api_key.strip():
         config.set_api_key(api_key.strip())
 
     effective_key = (api_key or x_gemini_key or config.get_api_key() or "").strip()
-
     if not effective_key:
         raise HTTPException(
             status_code=400,
-            detail="Gemini API Key is required to analyze this document. Please set GEMINI_API_KEY in your server environment variables.",
+            detail="Gemini API Key is required. Please set GEMINI_API_KEY in Vercel environment variables.",
         )
 
-    # 2. Determine file extension
-    file_ext = Path(file.filename or "").suffix.lower()
-    if not file_ext:
-        file_ext = ".bin"
+    # 2. Check Supabase Cloud Storage configuration
+    sb_cfg = supabase_client.get_supabase_config()
+    if not sb_cfg.get("enabled"):
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase Cloud is not configured. Please set SUPABASE_URL and SUPABASE_KEY in Vercel environment variables.",
+        )
 
-    # Generate unique ID and save file
+    # 3. Read file bytes directly into memory
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    file_size = len(contents)
+    file_ext = Path(file.filename or "").suffix.lower() or ".bin"
     doc_id = uuid.uuid4().hex[:12]
     saved_filename = f"{doc_id}{file_ext}"
-    target_path = DOCUMENTS_DIR / saved_filename
-
-    contents = await file.read()
-    file_size = len(contents)
-
-    with open(target_path, "wb") as f:
-        f.write(contents)
 
     # Determine MIME type
     mime_type = file.content_type
     if not mime_type or mime_type == "application/octet-stream":
-        mime_type, _ = mimetypes.guess_type(target_path.name)
+        mime_type, _ = mimetypes.guess_type(file.filename or saved_filename)
         if not mime_type:
             mime_type = "image/jpeg"
 
-    # Analyze document with Gemini
+    # 4. AI analyzes document directly from memory bytes
     analysis = analyzer.analyze_document(
-        file_path=target_path,
+        file_bytes=contents,
         mime_type=mime_type,
+        filename=file.filename or saved_filename,
         api_key=effective_key,
         model_name=model or DEFAULT_MODEL,
     )
 
-    # Upload to Supabase Bucket if configured & enabled
-    sb_info = None
-    if supabase_client.get_supabase_config().get("enabled"):
-        try:
-            sb_info = supabase_client.upload_to_supabase_bucket(
-                file_bytes=contents,
-                saved_filename=saved_filename,
-                mime_type=mime_type,
-            )
-        except Exception as sb_err:
-            print(f"[Supabase] Bucket upload error: {sb_err}")
+    # 5. Upload binary file directly to Supabase Storage Bucket
+    try:
+        sb_info = supabase_client.upload_to_supabase_bucket(
+            file_bytes=contents,
+            saved_filename=saved_filename,
+            mime_type=mime_type,
+        )
+    except Exception as sb_err:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload document to Supabase storage bucket: {sb_err}",
+        )
 
-    # Save to file database and Supabase PostgreSQL table
-    saved_record = database.save_document(
-        doc_id=doc_id,
-        original_filename=file.filename or saved_filename,
-        saved_filename=saved_filename,
-        file_path=target_path,
-        mime_type=mime_type,
-        file_size_bytes=file_size,
-        analysis=analysis,
-        storage_path=sb_info.get("storage_path") if sb_info else None,
-        storage_url=sb_info.get("storage_url") if sb_info else None,
-    )
+    # 6. Save structured metadata record directly to Supabase PostgreSQL table
+    try:
+        saved_record = database.save_document(
+            doc_id=doc_id,
+            original_filename=file.filename or saved_filename,
+            saved_filename=saved_filename,
+            mime_type=mime_type,
+            file_size_bytes=file_size,
+            analysis=analysis,
+            storage_path=sb_info["storage_path"],
+            storage_url=sb_info.get("storage_url"),
+        )
+    except Exception as db_err:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save document metadata in Supabase database: {db_err}",
+        )
 
-    # Strict user requirement: on upload, response is a thumbs up ("👍")
+    # Return strict thumbs up as required
     return {
         "status": "success",
         "message": "👍",
@@ -286,19 +258,27 @@ async def upload_document(
 @app.post("/api/query")
 def query_documents(payload: QueryRequest, x_gemini_key: Optional[str] = Header(None)):
     """
-    Searches stored documents for the user query.
-    If matched, returns the document details directly without conversational filler.
+    Intelligently retrieves a document using Gemini AI matching against
+    structured metadata stored in Supabase Cloud DB.
+    Strictly AI retrieval — no offline/local keyword fallback.
     """
     query = payload.query.strip()
     if not query:
         return {"found": False, "message": "Document not found."}
 
     effective_key = (payload.api_key or x_gemini_key or config.get_api_key() or "").strip()
+    if not effective_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Gemini API Key is required to retrieve documents. Please set GEMINI_API_KEY.",
+        )
+
+    # 1. Fetch candidate documents from Supabase PostgreSQL table
     docs = database.list_documents()
-
     if not docs:
-        return {"found": False, "message": "No documents stored yet."}
+        return {"found": False, "message": "No documents stored in Supabase yet."}
 
+    # 2. Strict AI matching
     matched_doc = analyzer.find_matching_document(
         query=query,
         documents=docs,
@@ -316,18 +296,19 @@ def query_documents(payload: QueryRequest, x_gemini_key: Optional[str] = Header(
         "document": matched_doc,
         "file_url": f"/api/documents/{doc_id}/file",
         "download_url": f"/api/documents/{doc_id}/file?download=true",
+        "storage_url": matched_doc.get("storage_url"),
     }
 
 
 @app.get("/api/documents")
 def get_all_documents():
-    """Lists all stored documents."""
+    """Lists all stored documents directly from Supabase Cloud DB."""
     return {"documents": database.list_documents()}
 
 
 @app.get("/api/documents/{doc_id}")
 def get_document_details(doc_id: str):
-    """Gets metadata of a single document."""
+    """Gets metadata of a single document directly from Supabase."""
     doc = database.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -336,7 +317,7 @@ def get_document_details(doc_id: str):
 
 @app.get("/api/documents/{doc_id}/file")
 def get_document_file(doc_id: str, download: bool = False):
-    """Streams the document file for preview or download, from local disk or Supabase bucket."""
+    """Streams the document binary directly from Supabase Storage bucket."""
     doc = database.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -347,25 +328,6 @@ def get_document_file(doc_id: str, download: bool = False):
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
 
-    # 1. Check local file on disk
-    local_candidates = []
-    if doc.get("file_path"):
-        local_candidates.append(Path(doc["file_path"]))
-        local_candidates.append(DOCUMENTS_DIR / Path(doc["file_path"]).name)
-    if doc.get("saved_filename"):
-        local_candidates.append(DOCUMENTS_DIR / doc["saved_filename"])
-    if doc.get("doc_id"):
-        local_candidates.extend(list(DOCUMENTS_DIR.glob(f"{doc['doc_id']}*")))
-
-    for candidate in local_candidates:
-        if candidate and candidate.exists() and candidate.is_file():
-            return FileResponse(
-                path=candidate,
-                media_type=mime_type,
-                headers=headers,
-            )
-
-    # 2. Check Supabase Storage Bucket
     storage_path = doc.get("storage_path") or f"uploads/{doc.get('saved_filename')}"
     file_bytes = supabase_client.download_from_supabase_bucket(storage_path)
     if file_bytes:
@@ -375,12 +337,12 @@ def get_document_file(doc_id: str, download: bool = False):
             headers=headers,
         )
 
-    raise HTTPException(status_code=404, detail="Document file missing on disk and Supabase bucket")
+    raise HTTPException(status_code=404, detail="Document file not found in Supabase storage bucket")
 
 
 @app.delete("/api/documents/{doc_id}")
 def remove_document(doc_id: str):
-    """Deletes a document and its metadata."""
+    """Deletes a document from Supabase storage bucket and metadata table."""
     success = database.delete_document(doc_id)
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")

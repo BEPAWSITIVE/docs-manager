@@ -7,7 +7,6 @@ from google import genai
 from google.genai import types
 
 from backend.config import DEFAULT_MODEL
-from backend.database import fallback_keyword_search
 
 FALLBACK_MODELS = [
     "gemini-flash-latest",
@@ -52,41 +51,51 @@ def validate_api_key(api_key: str, model_name: str = DEFAULT_MODEL) -> bool:
 
 
 def analyze_document(
-    file_path: Path,
-    mime_type: str,
+    file_bytes: Optional[bytes] = None,
+    file_path: Optional[Path] = None,
+    mime_type: str = "application/octet-stream",
+    filename: str = "document",
     api_key: Optional[str] = None,
     model_name: str = DEFAULT_MODEL,
 ) -> Dict[str, Any]:
     """
-    Analyzes an uploaded document image or PDF using Gemini.
-    Extracts document type, cardholder name, document ID, issuing organization, and keywords.
-    Supports multi-document files (e.g. Aadhaar + PAN), promotional posters/banners, etc.
+    Analyzes an uploaded document image or PDF directly using Gemini Multimodal AI.
+    Extracts structured metadata: document type, person name, document ID, issuing organization, and keywords.
     """
     effective_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
 
+    stem_name = Path(filename).stem
     default_fallback = {
-        "document_type": file_path.stem.replace("_", " ").title(),
+        "document_type": stem_name.replace("_", " ").title(),
         "person_name": "",
         "document_number": "",
         "issuing_authority": "",
         "dob": "",
-        "searchable_keywords": [file_path.stem.lower()],
-        "short_summary": f"Uploaded document: {file_path.name}",
+        "searchable_keywords": [stem_name.lower()],
+        "short_summary": f"Uploaded document: {filename}",
     }
 
     if not effective_key:
         return default_fallback
 
+    # Read bytes from file_path if file_bytes not provided directly
+    if file_bytes is None and file_path is not None:
+        try:
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+        except Exception:
+            return default_fallback
+
+    if not file_bytes:
+        return default_fallback
+
     try:
         client = genai.Client(api_key=effective_key)
-
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
 
         is_visual = (
             mime_type.startswith("image/")
             or mime_type in ["application/pdf"]
-            or file_path.suffix.lower() in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".bmp"]
+            or any(filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".pdf", ".bmp"])
         )
 
         base_instructions = (
@@ -125,21 +134,8 @@ def analyze_document(
                 is_visual = False
 
         if not is_visual:
-            ext = file_path.suffix.lower()
-            sample_text = ""
-            if ext in [".txt", ".csv", ".json", ".md", ".log", ".xml", ".html", ".py", ".js"]:
-                sample_text = file_bytes.decode("utf-8", errors="ignore")[:6000]
-            elif ext == ".docx":
-                try:
-                    import docx
-                    doc_obj = docx.Document(file_path)
-                    sample_text = "\n".join([p.text for p in doc_obj.paragraphs if p.text])[:6000]
-                except Exception:
-                    sample_text = file_bytes.decode("utf-8", errors="ignore")[:4000]
-            else:
-                sample_text = f"File: {file_path.name}, Size: {len(file_bytes)} bytes."
-
-            text_prompt = f"Filename: {file_path.name}\nExtracted Content:\n{sample_text}\n\n{base_instructions}"
+            sample_text = file_bytes.decode("utf-8", errors="ignore")[:6000]
+            text_prompt = f"Filename: {filename}\nExtracted Content:\n{sample_text}\n\n{base_instructions}"
             contents_payload = [text_prompt]
 
         models_to_try = _get_model_candidates(model_name)
@@ -160,10 +156,10 @@ def analyze_document(
                     keywords = parsed.get("searchable_keywords", [])
                     if isinstance(keywords, str):
                         keywords = [k.strip() for k in keywords.split(",")]
-                    # Include stem tokens from original filename
-                    filename_tokens = [w.lower() for w in re.findall(r"\w+", file_path.stem) if len(w) > 2]
+                    # Include filename tokens
+                    filename_tokens = [w.lower() for w in re.findall(r"\w+", stem_name) if len(w) > 2]
                     keywords.extend(filename_tokens)
-                    keywords.append(file_path.stem.lower())
+                    keywords.append(stem_name.lower())
                     parsed["searchable_keywords"] = list(dict.fromkeys(keywords))
                     return parsed
             except Exception as model_err:
@@ -171,7 +167,7 @@ def analyze_document(
                 continue
 
     except Exception as e:
-        print(f"[analyzer.analyze_document] Fatal error: {e}")
+        print(f"[analyzer.analyze_document] Error: {e}")
 
     return default_fallback
 
@@ -183,76 +179,79 @@ def find_matching_document(
     model_name: str = DEFAULT_MODEL,
 ) -> Optional[Dict[str, Any]]:
     """
-    Uses Gemini to intelligently match a natural language query
-    (e.g. 'give me Deepak Aadhar card' or 'precision optics banner')
-    against candidate document metadata in the database.
-    Falls back gracefully to other models and to keyword search on complete failure.
+    Uses Gemini AI to intelligently match a natural language query
+    (e.g. 'Give me Shivam\'s Aadhar card' or 'Shivam ka aadhar dena')
+    strictly against structured document metadata stored in Supabase.
+    No local fallback.
     """
     if not documents:
         return None
 
     effective_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
+    if not effective_key:
+        print("[analyzer.find_matching_document] Missing GEMINI_API_KEY")
+        return None
 
-    # If Gemini is available, use LLM-based intelligent semantic match
-    if effective_key:
-        candidates = []
-        for doc in documents:
-            analysis = doc.get("analysis", {})
-            candidates.append({
-                "doc_id": doc.get("doc_id"),
-                "document_type": analysis.get("document_type"),
-                "person_name": analysis.get("person_name"),
-                "document_number": analysis.get("document_number"),
-                "issuing_authority": analysis.get("issuing_authority"),
-                "searchable_keywords": analysis.get("searchable_keywords", []),
-                "short_summary": analysis.get("short_summary"),
-                "original_filename": doc.get("original_filename"),
-            })
+    # Prepare candidate metadata list from Supabase
+    candidates = []
+    for doc in documents:
+        analysis = doc.get("analysis", {})
+        candidates.append({
+            "doc_id": doc.get("doc_id"),
+            "document_type": analysis.get("document_type"),
+            "person_name": analysis.get("person_name"),
+            "document_number": analysis.get("document_number"),
+            "issuing_authority": analysis.get("issuing_authority"),
+            "searchable_keywords": analysis.get("searchable_keywords", []),
+            "short_summary": analysis.get("short_summary"),
+            "original_filename": doc.get("original_filename"),
+        })
 
-        prompt = (
-            f"User request: '{query}'\n\n"
-            f"Candidate documents in database:\n"
-            f"{json.dumps(candidates, indent=2)}\n\n"
-            "Task: Determine which single document ID best matches the user's request.\n"
-            "Rules:\n"
-            "1. Match carefully on person name, document type (e.g. Aadhaar, PAN, College ID, Quotation, Resume), company/brand name, and filename.\n"
-            "2. Multi-card / Multi-doc files: If a file contains multiple documents (e.g. 'Aadhaar Card and PAN Card' or 'adhar and pan.pdf'), "
-            "it matches requests for EITHER card type (e.g. 'aadhar' or 'pan').\n"
-            "3. Person Name Strictness: If the user asks for a document belonging to person A (e.g. 'Deepak ka aadhar'), "
-            "and a candidate belongs to person B (e.g. 'Kabeer' or 'John'), DO NOT match person B's document! Return null instead.\n"
-            "4. Marketing / Banners / Posters: If the user asks for 'precision optics banner' or 'offer poster', match the relevant marketing document or banner.\n"
-            "5. If no candidate document matches the user's request with clear confidence, return null for matched_doc_id.\n\n"
-            "Return STRICTLY a JSON object with this key:\n"
-            '{"matched_doc_id": "<doc_id>" or null}'
-        )
+    prompt = (
+        f"User request: \"{query}\"\n\n"
+        f"Candidate documents in Cloud Database:\n"
+        f"{json.dumps(candidates, indent=2)}\n\n"
+        "Task: You are an intelligent document retrieval agent. Determine which single document ID best matches the user's request.\n\n"
+        "Strict Matching Rules:\n"
+        "1. Person Name Matching: Pay critical attention to the person's name requested (e.g. 'Shivam', 'Deepak', 'Kabeer'). "
+        "If the user asks for 'Shivam\'s Aadhar card', find the document belonging to 'Shivam'. "
+        "NEVER return a document belonging to a different person (e.g. never return Kabeer's or Deepak's document for Shivam).\n"
+        "2. Document Type Matching: Match the requested document type (e.g. Aadhaar Card, PAN Card, Driving License, Passport, Marksheet, Resume, Quotation, Invoice, Offer Poster, Banner).\n"
+        "3. Multi-Card / Multi-Document files: If a file contains multiple cards or documents (for instance 'Aadhaar Card and PAN Card' or 'adhar and pan.pdf'), "
+        "it IS a match if the user asks for EITHER of those documents for that person.\n"
+        "4. Marketing & Banners: For queries like 'precision optics banner' or 'offer poster', match the candidate with the corresponding company/brand name and document type.\n"
+        "5. Multilingual & Hinglish: Understand queries in English, Hindi, or Hinglish (e.g. 'Shivam ka aadhar dena', 'deepak ka pan card bhejo', 'mujhe quotation chahiye').\n"
+        "6. No Hallucination / Null Result: If NO document in the candidate list matches the user's request with clear confidence, return null for matched_doc_id.\n\n"
+        "Return STRICTLY a JSON object with this exact format:\n"
+        '{"matched_doc_id": "<doc_id>" or null, "reason": "<brief justification>"}'
+    )
 
-        models_to_try = _get_model_candidates(model_name)
-        for current_model in models_to_try:
-            try:
-                client = genai.Client(api_key=effective_key)
-                response = client.models.generate_content(
-                    model=current_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.0,
-                    ),
-                )
+    models_to_try = _get_model_candidates(model_name)
+    for current_model in models_to_try:
+        try:
+            client = genai.Client(api_key=effective_key)
+            response = client.models.generate_content(
+                model=current_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.0,
+                ),
+            )
 
-                if response and response.text:
-                    cleaned = _clean_json_response(response.text)
-                    result = json.loads(cleaned)
-                    matched_id = result.get("matched_doc_id")
-                    if matched_id:
-                        for doc in documents:
-                            if doc.get("doc_id") == matched_id:
-                                return doc
-                    # If Gemini explicitly answered that no document matched, return None!
-                    # Do NOT fall through to keyword search when the LLM deliberately said null.
-                    return None
-            except Exception as model_err:
-                print(f"[analyzer.find_matching_document] Model '{current_model}' failed: {model_err}. Trying fallback...")
-                continue
+            if response and response.text:
+                cleaned = _clean_json_response(response.text)
+                result = json.loads(cleaned)
+                matched_id = result.get("matched_doc_id")
+                if matched_id:
+                    for doc in documents:
+                        if doc.get("doc_id") == matched_id:
+                            return doc
+                # AI explicitly answered that no document matched
+                return None
+        except Exception as model_err:
+            print(f"[analyzer.find_matching_document] Model '{current_model}' failed: {model_err}. Trying fallback...")
+            continue
 
-    # Fallback to deterministic keyword matching only if LLM is unavailable or all models failed
-    return fallback_keyword_search(query)
+    # Pure AI matching: if AI fails or no match, return None
+    return None

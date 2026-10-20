@@ -548,7 +548,7 @@ FOR DELETE USING (bucket_id = 'documents');`;
               <div onClick={() => setMobileView('sidebar')} style={{ cursor: 'pointer' }}>
                 <div className="top-name">Docs Manager</div>
                 <div className="top-status">
-                  Online {isSupabaseEnabled ? '• ☁️ Cloud' : '• Local'}
+                  Online {isSupabaseEnabled ? '• ☁️ Supabase Cloud' : ''}
                 </div>
               </div>
             </div>
@@ -817,13 +817,13 @@ FOR DELETE USING (bucket_id = 'documents');`;
                     {isSupabaseEnabled ? (
                       <span className="status-badge connected">● Connected</span>
                     ) : (
-                      <span className="status-badge offline">📁 Local Vault Mode</span>
+                      <span className="status-badge missing">⚠️ Missing SUPABASE_URL / KEY</span>
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: '#667781', marginTop: 8 }}>
                     {isSupabaseEnabled
-                      ? 'Files and metadata are automatically synced with your Supabase Cloud project.'
-                      : 'Running in local filesystem mode. To enable Cloud Storage, set SUPABASE_URL and SUPABASE_KEY in your server environment variables.'}
+                      ? 'Binary files are stored in Supabase Storage and metadata is indexed in Supabase DB.'
+                      : 'Cloud database required. Please set SUPABASE_URL and SUPABASE_KEY in Vercel environment variables.'}
                   </div>
                 </div>
 
