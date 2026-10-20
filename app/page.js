@@ -108,19 +108,46 @@ CREATE TABLE IF NOT EXISTS documents_metadata (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. Storage Bucket Policies (allows upload & download with anon/publishable key)
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('documents', 'documents', true) 
+-- Allow all reads/writes on metadata table
+ALTER TABLE documents_metadata ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow all on documents_metadata" ON documents_metadata;
+CREATE POLICY "Allow all on documents_metadata"
+ON documents_metadata FOR ALL
+TO public
+USING (true)
+WITH CHECK (true);
+
+-- 2. Create Storage Bucket 'documents' (public)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('documents', 'documents', true, null, null)
 ON CONFLICT (id) DO UPDATE SET public = true;
 
-CREATE POLICY "Allow public storage upload" ON storage.objects
-FOR INSERT WITH CHECK (bucket_id = 'documents');
+-- 3. Storage Object Policies (Idempotent: drop first if exists)
+DROP POLICY IF EXISTS "Allow public storage upload" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public storage select" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public storage update" ON storage.objects;
+DROP POLICY IF EXISTS "Allow public storage delete" ON storage.objects;
 
-CREATE POLICY "Allow public storage select" ON storage.objects
-FOR SELECT USING (bucket_id = 'documents');
+CREATE POLICY "Allow public storage upload"
+ON storage.objects FOR INSERT
+TO public
+WITH CHECK (bucket_id = 'documents');
 
-CREATE POLICY "Allow public storage delete" ON storage.objects
-FOR DELETE USING (bucket_id = 'documents');`;
+CREATE POLICY "Allow public storage select"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'documents');
+
+CREATE POLICY "Allow public storage update"
+ON storage.objects FOR UPDATE
+TO public
+USING (bucket_id = 'documents')
+WITH CHECK (bucket_id = 'documents');
+
+CREATE POLICY "Allow public storage delete"
+ON storage.objects FOR DELETE
+TO public
+USING (bucket_id = 'documents');`;
     if (navigator?.clipboard?.writeText) {
       navigator.clipboard.writeText(sql);
       setCopiedSql(true);

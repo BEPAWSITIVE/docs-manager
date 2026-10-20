@@ -223,9 +223,18 @@ async def upload_document(
             mime_type=mime_type,
         )
     except Exception as sb_err:
+        err_str = str(sb_err)
+        if "row-level security" in err_str.lower() or "403" in err_str:
+            detail_msg = (
+                "Supabase Storage 403: 'documents' bucket is missing or RLS blocked upload. "
+                "Fix: In Supabase Dashboard -> Storage, create a public bucket named 'documents', "
+                "or set SUPABASE_KEY in Vercel to your Supabase 'service_role' secret key."
+            )
+        else:
+            detail_msg = f"Failed to upload document to Supabase storage bucket: {sb_err}"
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to upload document to Supabase storage bucket: {sb_err}",
+            detail=detail_msg,
         )
 
     # 6. Save structured metadata record directly to Supabase PostgreSQL table
