@@ -419,3 +419,39 @@ def get_zernio_debug_logs():
     }
 
 
+@app.get("/api/zernio/diagnostics")
+def get_zernio_diagnostics():
+    """Queries Zernio API directly to inspect configured webhooks, accounts, and logs."""
+    import httpx
+    api_key = zernio_client.get_zernio_api_key()
+    if not api_key:
+        return {"error": "ZERNIO_API_KEY is not configured"}
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+    results = {}
+
+    with httpx.Client(timeout=8.0) as client:
+        # 1. Webhook Settings
+        try:
+            wh_res = client.get("https://api.zernio.com/v1/webhooks/settings", headers=headers)
+            results["webhooks"] = wh_res.json() if wh_res.status_code == 200 else {"status": wh_res.status_code, "text": wh_res.text}
+        except Exception as e:
+            results["webhooks"] = {"error": str(e)}
+
+        # 2. Connected Accounts
+        try:
+            acc_res = client.get("https://api.zernio.com/v1/accounts", headers=headers)
+            results["accounts"] = acc_res.json() if acc_res.status_code == 200 else {"status": acc_res.status_code, "text": acc_res.text}
+        except Exception as e:
+            results["accounts"] = {"error": str(e)}
+
+        # 3. Recent Activity Logs
+        try:
+            logs_res = client.get("https://api.zernio.com/v1/logs?type=all&limit=15", headers=headers)
+            results["logs"] = logs_res.json() if logs_res.status_code == 200 else {"status": logs_res.status_code, "text": logs_res.text}
+        except Exception as e:
+            results["logs"] = {"error": str(e)}
+
+    return results
+
+
