@@ -92,6 +92,7 @@ def analyze_document(
         "document_type": stem_name.replace("_", " ").title(),
         "person_name": "",
         "document_number": "",
+        "phone_number": "",
         "issuing_authority": "",
         "dob": "",
         "searchable_keywords": [stem_name.lower()],
@@ -132,7 +133,7 @@ def analyze_document(
             "or flyer (e.g. 'Precision Optics Offer Banner', discounts, eyewear, retail poster), classify document_type "
             "appropriately (e.g. 'Promotional Banner' or 'Offer Poster'), extract the store/business name into "
             "issuing_authority, and include all prominent keywords (e.g. 'precision optics', 'banner', 'poster', 'offer', discounts).\n"
-            "3. Personal ID & Invoices: Accurately extract person_name, ID numbers, issue date / DOB, and organization.\n"
+            "3. Personal ID & Invoices: Accurately extract person_name, ID numbers, phone number, issue date / DOB, and organization.\n"
             "4. Searchable Keywords: Array of all relevant search keywords including document type variations, "
             "transliterations ('aadhar', 'adhar', 'aadhaar', 'pan'), person names, company names, key offerings, and filename terms.\n\n"
             "Return STRICTLY a JSON object with this exact structure:\n"
@@ -140,6 +141,7 @@ def analyze_document(
             '  "document_type": string,\n'
             '  "person_name": string,\n'
             '  "document_number": string,\n'
+            '  "phone_number": string,\n'
             '  "issuing_authority": string,\n'
             '  "dob": string,\n'
             '  "searchable_keywords": string[],\n'

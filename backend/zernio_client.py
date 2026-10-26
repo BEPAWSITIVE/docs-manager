@@ -38,12 +38,15 @@ def _log_event(summary: str, details: Any = None):
 def send_conversation_reply(
     conversation_id: str,
     account_id: str,
-    text: str,
+    text: Optional[str] = None,
     attachment_url: Optional[str] = None,
+    attachment_type: Optional[str] = None,
+    attachment_name: Optional[str] = None,
 ) -> bool:
     """
     Sends a message reply back to a user via Zernio Unified Inbox API.
     Works for WhatsApp, SMS, and other connected channels.
+    Supports file-only delivery (omits text/message payload when text is empty/None).
     """
     api_key = get_zernio_api_key()
     if not api_key:
@@ -58,11 +61,18 @@ def send_conversation_reply(
 
     payload: Dict[str, Any] = {
         "accountId": account_id,
-        "message": text,
-        "text": text,
     }
 
+    if text and text.strip():
+        payload["message"] = text.strip()
+        payload["text"] = text.strip()
+
     if attachment_url:
+        guessed_type = attachment_type or ("image" if any(attachment_url.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]) else "file")
+        payload["attachmentUrl"] = attachment_url
+        payload["attachmentType"] = guessed_type
+        if attachment_name:
+            payload["attachmentName"] = attachment_name
         payload["attachments"] = [{"url": attachment_url}]
         payload["attachment"] = {"url": attachment_url}
 
@@ -70,10 +80,7 @@ def send_conversation_reply(
         with httpx.Client(timeout=8.0) as client:
             resp = client.post(url, json=payload, headers=headers)
             _log_event(f"POST {url} status={resp.status_code}", resp.text[:200])
-            if resp.status_code in [200, 201, 202]:
-                return True
-            else:
-                return False
+            return resp.status_code in [200, 201, 202]
     except Exception as e:
         _log_event(f"Inbox send error: {e}")
         return False
@@ -107,7 +114,7 @@ def find_conversation_by_phone(account_id: str, phone: str) -> Optional[str]:
 def send_direct_sms_reply(
     from_phone: str,
     to_phone: str,
-    text: str,
+    text: Optional[str] = None,
     media_url: Optional[str] = None,
 ) -> bool:
     """
@@ -127,8 +134,12 @@ def send_direct_sms_reply(
     payload: Dict[str, Any] = {
         "from": from_phone,
         "to": to_phone,
-        "text": text,
     }
+
+    if text and text.strip():
+        payload["text"] = text.strip()
+    elif media_url:
+        payload["text"] = ""
 
     if media_url:
         payload["mediaUrls"] = [media_url]
@@ -148,8 +159,10 @@ def send_reply(
     account_id: Optional[str],
     sender_phone: Optional[str],
     recipient_phone: Optional[str],
-    text: str,
+    text: Optional[str] = None,
     media_url: Optional[str] = None,
+    attachment_type: Optional[str] = None,
+    attachment_name: Optional[str] = None,
 ) -> bool:
     """
     Robust dual-channel reply:
@@ -163,6 +176,8 @@ def send_reply(
             account_id=account_id,
             text=text,
             attachment_url=media_url,
+            attachment_type=attachment_type,
+            attachment_name=attachment_name,
         )
 
     # Fallback to direct SMS if conversation failed and phone numbers are present
@@ -357,6 +372,7 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     if attachments:
         processed_count = 0
         api_key = get_zernio_api_key()
+        uploaded_summaries = []
 
         for att in attachments:
             media_url = att.get("url")
@@ -414,20 +430,49 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 )
 
                 processed_count += 1
-                doc_type = analysis.get("document_type", "Document")
-                person = analysis.get("person_name", "")
+                doc_type = (analysis.get("document_type") or "").strip()
+                person = (analysis.get("person_name") or "").strip()
+                doc_num = (analysis.get("document_number") or "").strip()
+                phone_num = (analysis.get("phone_number") or "").strip()
+                dob = (analysis.get("dob") or "").strip()
+                authority = (analysis.get("issuing_authority") or "").strip()
+
+                pts = []
+                if doc_type and doc_type.lower() != "document":
+                    pts.append(f"• Document: {doc_type}")
+                if person:
+                    pts.append(f"• Name: {person}")
+                if doc_num:
+                    pts.append(f"• ID No: {doc_num}")
+                if phone_num:
+                    pts.append(f"• Phone: {phone_num}")
+                if dob:
+                    pts.append(f"• DOB: {dob}")
+                if authority:
+                    pts.append(f"• Authority: {authority}")
+
+                if pts:
+                    uploaded_summaries.append(pts)
+
                 _log_event(f"Uploaded and indexed: {doc_type} for {person} (doc_id={doc_id})")
 
             except Exception as ex:
                 _log_event(f"Error processing attachment: {ex}")
 
         if processed_count > 0:
+            lines = ["👍\n"]
+            for idx, pts in enumerate(uploaded_summaries):
+                lines.extend(pts)
+                if idx < len(uploaded_summaries) - 1:
+                    lines.append("")
+
+            reply_msg = "\n".join(lines).strip()
             send_reply(
                 conversation_id=conversation_id,
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text="👍",
+                text=reply_msg,
             )
             return {"status": "uploaded", "count": processed_count}
         else:
@@ -451,7 +496,7 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text="No documents have been stored in the vault yet. Upload an ID or document first!",
+                text="Document not found.",
             )
             return {"status": "no_docs_in_vault"}
 
@@ -463,33 +508,28 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
 
         if matched_doc:
             doc_id = matched_doc.get("doc_id")
-            analysis = matched_doc.get("analysis", {})
-            doc_type = analysis.get("document_type", "Document")
-            person_name = analysis.get("person_name", "")
-            doc_num = analysis.get("document_number", "")
-            summary = analysis.get("short_summary", "")
             file_url = matched_doc.get("storage_url") or ""
+            if not file_url:
+                sb_cfg = supabase_client.get_supabase_config()
+                storage_path = matched_doc.get("storage_path") or f"uploads/{matched_doc.get('saved_filename')}"
+                file_url = f"{sb_cfg['url']}/storage/v1/object/public/{sb_cfg['bucket']}/{storage_path}"
 
-            lines = [f"📄 *{doc_type}*"]
-            if person_name:
-                lines.append(f"👤 Name: {person_name}")
-            if doc_num:
-                lines.append(f"🔢 ID: {doc_num}")
-            if summary:
-                lines.append(f"ℹ️ {summary}")
-            if file_url:
-                lines.append(f"\n🔗 View / Download:\n{file_url}")
+            mime_type = matched_doc.get("mime_type", "application/octet-stream")
+            orig_name = matched_doc.get("original_filename") or matched_doc.get("saved_filename") or f"{doc_id}.bin"
+            att_type = "image" if mime_type.startswith("image/") else "file"
 
-            reply_msg = "\n".join(lines)
-            _log_event(f"Replying match for query '{text_content}': doc_id={doc_id}")
+            _log_event(f"Sending ONLY document file for query '{text_content}': doc_id={doc_id}, url={file_url}")
 
+            # Send strictly ONLY the file — no conversation, paragraph, or text explanation
             send_reply(
                 conversation_id=conversation_id,
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text=reply_msg,
-                media_url=file_url if file_url else None,
+                text=None,
+                media_url=file_url,
+                attachment_type=att_type,
+                attachment_name=orig_name,
             )
             return {"status": "matched", "doc_id": doc_id}
         else:
@@ -499,7 +539,7 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text="Document not found. Please specify the person's name or document type (e.g. 'Give me Shivam's Aadhar card').",
+                text="Document not found.",
             )
             return {"status": "not_found"}
 
