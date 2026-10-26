@@ -366,6 +366,7 @@ def remove_document(doc_id: str):
 # =============================================================================
 
 @app.get("/api/zernio/webhook")
+@app.get("/api/zernio/webhoo")
 def zernio_webhook_health():
     """Health check endpoint for Zernio webhook registration."""
     api_key = zernio_client.get_zernio_api_key()
@@ -378,6 +379,7 @@ def zernio_webhook_health():
 
 
 @app.post("/api/zernio/webhook")
+@app.post("/api/zernio/webhoo")
 async def handle_zernio_webhook(
     request: Request,
     x_zernio_event_id: Optional[str] = Header(None),
