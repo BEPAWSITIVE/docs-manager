@@ -325,17 +325,22 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
             elif isinstance(att, str) and att.startswith("http"):
                 attachments.append({"url": att, "type": "image/jpeg", "filename": None})
 
-    # Extract text content safely (WhatsApp sends {"body": "..."}, Instagram sends str or null)
+    # Extract text content safely across WhatsApp/Instagram/SMS schemas
+    # WhatsApp often sends {"message": "shivam docs"} or {"text": {"body": "..."}} or {"body": "..."}
     text_content = ""
     raw_text = (
-        message_data.get("text")
+        message_data.get("message")
+        or message_data.get("text")
         or message_data.get("body")
         or message_data.get("caption")
+        or data.get("message")
         or data.get("text")
+        or data.get("body")
+        or event_data.get("message")
         or event_data.get("text")
     )
     if isinstance(raw_text, dict):
-        text_content = str(raw_text.get("body") or raw_text.get("text") or "").strip()
+        text_content = str(raw_text.get("body") or raw_text.get("text") or raw_text.get("message") or "").strip()
     elif isinstance(raw_text, str):
         text_content = raw_text.strip()
     elif raw_text is not None:
