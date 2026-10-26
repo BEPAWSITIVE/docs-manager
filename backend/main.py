@@ -3,13 +3,13 @@ import uuid
 import mimetypes
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from backend.config import DEFAULT_MODEL
-from backend import config, database, analyzer, supabase_client
+from backend import config, database, analyzer, supabase_client, zernio_client
 
 app = FastAPI(
     title="Docs Manager API",
@@ -356,3 +356,40 @@ def remove_document(doc_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Document not found")
     return {"status": "success", "message": f"Document {doc_id} deleted"}
+
+
+# =============================================================================
+# Zernio (WhatsApp & SMS) Webhook & Integration Endpoints
+# =============================================================================
+
+@app.get("/api/zernio/webhook")
+def zernio_webhook_health():
+    """Health check endpoint for Zernio webhook registration."""
+    api_key = zernio_client.get_zernio_api_key()
+    return {
+        "status": "online",
+        "service": "Zernio WhatsApp / SMS Webhook",
+        "has_api_key": bool(api_key),
+        "endpoint": "/api/zernio/webhook",
+    }
+
+
+@app.post("/api/zernio/webhook")
+async def handle_zernio_webhook(
+    request: Request,
+    x_zernio_event_id: Optional[str] = Header(None),
+):
+    """
+    Receives incoming WhatsApp / SMS messages & media uploads from Zernio.
+    - If media uploaded: Analyzes with Gemini Multimodal OCR -> stores in Supabase -> replies '👍'.
+    - If natural language query: Searches structured metadata via Gemini AI -> replies with document.
+    """
+    try:
+        payload = await request.json()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid JSON: {e}"})
+
+    # Process the message/document directly
+    result = zernio_client.process_incoming_zernio_event(payload)
+    return {"status": "success", "result": result}
+

@@ -857,6 +857,25 @@ USING (bucket_id = 'documents');`;
                   </div>
                 </div>
 
+                {/* Zernio WhatsApp & SMS Card */}
+                <div className="settings-service-card" style={{ marginTop: 12 }}>
+                  <div className="service-card-header">
+                    <div className="service-name-row">
+                      <span className="service-icon">📱</span>
+                      <div>
+                        <strong>Zernio WhatsApp & SMS Gateway</strong>
+                        <div className="service-subtext">Mobile Number Webhook Integration</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#667781', marginTop: 8 }}>
+                    Upload and search documents directly via your Zernio US number over WhatsApp or SMS.
+                  </div>
+                  <div style={{ marginTop: 8, background: '#f0f2f5', padding: '8px 10px', borderRadius: 6, fontSize: 12, wordBreak: 'break-all' }}>
+                    <strong>Webhook URL:</strong> <code>{typeof window !== 'undefined' ? `${window.location.origin}/api/zernio/webhook` : '/api/zernio/webhook'}</code>
+                  </div>
+                </div>
+
                 {/* Security Notice Box */}
                 <div className="security-notice-box" style={{ marginTop: 16 }}>
                   <div className="security-notice-title">
@@ -876,7 +895,11 @@ USING (bucket_id = 'documents');`;
                     </div>
                     <div className="env-grid-item">
                       <code>SUPABASE_KEY</code>
-                      <span>Supabase <code>service_role</code> or <code>anon</code> key</span>
+                      <span>Supabase <code>service_role</code> secret key</span>
+                    </div>
+                    <div className="env-grid-item">
+                      <code>ZERNIO_API_KEY</code>
+                      <span>Zernio API Key (from Zernio Dashboard)</span>
                     </div>
                     <div className="env-grid-item">
                       <code>SUPABASE_BUCKET</code>

@@ -35,6 +35,7 @@ BACKEND_PORT = 8005
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 
 KEY_FILE = STORAGE_DIR / "gemini_key.txt"
+ZERNIO_KEY_FILE = STORAGE_DIR / "zernio_key.txt"
 
 
 def get_api_key() -> str:
@@ -58,3 +59,26 @@ def set_api_key(key: str) -> None:
     except Exception:
         pass
     os.environ["GEMINI_API_KEY"] = cleaned
+
+
+def get_zernio_api_key() -> str:
+    """Reads persistent Zernio API key."""
+    if ZERNIO_KEY_FILE.exists():
+        try:
+            k = ZERNIO_KEY_FILE.read_text(encoding="utf-8").strip()
+            if k:
+                return k
+        except Exception:
+            pass
+    return os.getenv("ZERNIO_API_KEY", "").strip()
+
+
+def set_zernio_api_key(key: str) -> None:
+    """Persists Zernio API key."""
+    cleaned = key.strip()
+    try:
+        ZERNIO_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ZERNIO_KEY_FILE.write_text(cleaned, encoding="utf-8")
+    except Exception:
+        pass
+    os.environ["ZERNIO_API_KEY"] = cleaned
