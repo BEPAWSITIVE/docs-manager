@@ -463,14 +463,14 @@ def get_zernio_diagnostics(zernio_path: Optional[str] = None):
 
         # 3. Recent Inbox Conversations
         try:
-            conv_res = client.get("https://api.zernio.com/v1/inbox/conversations?limit=10", headers=headers)
+            conv_res = client.get("https://api.zernio.com/v1/inbox/conversations?accountId=6adf16ad9c74a0a97edb9b33&limit=10", headers=headers)
             results["conversations"] = conv_res.json() if conv_res.status_code == 200 else {"status": conv_res.status_code, "text": conv_res.text}
         except Exception as e:
             results["conversations"] = {"error": str(e)}
 
         # 4. Recent Activity Logs
         try:
-            logs_res = client.get("https://api.zernio.com/v1/logs?limit=25", headers=headers)
+            logs_res = client.get("https://api.zernio.com/v1/logs?type=all&limit=25", headers=headers)
             results["logs"] = logs_res.json() if logs_res.status_code == 200 else {"status": logs_res.status_code, "text": logs_res.text}
         except Exception as e:
             results["logs"] = {"error": str(e)}

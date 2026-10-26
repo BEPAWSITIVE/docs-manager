@@ -364,8 +364,10 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 continue
 
             try:
-                # 1. Download media bytes (pass auth header if fetching from Zernio)
-                dl_headers = {}
+                # 1. Download media bytes (pass auth header if fetching from Zernio, and User-Agent for CDNs)
+                dl_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
                 if "zernio.com" in media_url and api_key:
                     dl_headers["Authorization"] = f"Bearer {api_key}"
 
