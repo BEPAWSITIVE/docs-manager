@@ -73,8 +73,18 @@ def send_conversation_reply(
         payload["attachmentType"] = guessed_type
         if attachment_name:
             payload["attachmentName"] = attachment_name
-        payload["attachments"] = [{"url": attachment_url}]
-        payload["attachment"] = {"url": attachment_url}
+        payload["attachments"] = [
+            {
+                "url": attachment_url,
+                "type": guessed_type,
+                "name": attachment_name or "document",
+            }
+        ]
+        payload["attachment"] = {
+            "url": attachment_url,
+            "type": guessed_type,
+            "name": attachment_name or "document",
+        }
 
     try:
         with httpx.Client(timeout=8.0) as client:
@@ -394,10 +404,29 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                         continue
                     file_bytes = media_resp.content
 
-                mime_type = att.get("type") or media_resp.headers.get("content-type") or "image/jpeg"
-                if not mime_type or mime_type == "application/octet-stream":
-                    mime_type = "image/jpeg"
-                file_ext = mimetypes.guess_extension(mime_type) or ".jpg"
+                # Correctly resolve real MIME type (must contain '/')
+                raw_mime = (
+                    att.get("contentType")
+                    or att.get("mimeType")
+                    or (att.get("payload", {}).get("mimeType") if isinstance(att.get("payload"), dict) else None)
+                    or media_resp.headers.get("content-type")
+                )
+                if not raw_mime or "/" not in str(raw_mime):
+                    att_category = str(att.get("type") or "").lower()
+                    if att_category in ["image", "photo", "picture"]:
+                        raw_mime = "image/jpeg"
+                    elif att_category in ["video", "mp4"]:
+                        raw_mime = "video/mp4"
+                    elif att_category in ["audio", "voice"]:
+                        raw_mime = "audio/ogg"
+                    elif att_category in ["pdf", "document", "file"]:
+                        raw_mime = "application/pdf"
+                    else:
+                        guessed_m, _ = mimetypes.guess_type(att.get("filename") or "")
+                        raw_mime = guessed_m or "image/jpeg"
+
+                mime_type = str(raw_mime).split(";")[0].strip()
+                file_ext = mimetypes.guess_extension(mime_type) or (".jpg" if "image" in mime_type else ".pdf")
                 doc_id = uuid.uuid4().hex[:12]
                 saved_filename = f"{doc_id}{file_ext}"
                 filename = att.get("filename") or f"{platform}_{saved_filename}"
@@ -508,17 +537,24 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
 
         if matched_doc:
             doc_id = matched_doc.get("doc_id")
-            file_url = matched_doc.get("storage_url") or ""
-            if not file_url:
-                sb_cfg = supabase_client.get_supabase_config()
-                storage_path = matched_doc.get("storage_path") or f"uploads/{matched_doc.get('saved_filename')}"
-                file_url = f"{sb_cfg['url']}/storage/v1/object/public/{sb_cfg['bucket']}/{storage_path}"
+            saved_fname = matched_doc.get("saved_filename") or f"{doc_id}.jpg"
+            orig_name = matched_doc.get("original_filename") or saved_fname
+            raw_mime = matched_doc.get("mime_type", "")
 
-            mime_type = matched_doc.get("mime_type", "application/octet-stream")
-            orig_name = matched_doc.get("original_filename") or matched_doc.get("saved_filename") or f"{doc_id}.bin"
+            # Fix mime_type if it was stored as 'image', 'file', or without '/'
+            if not raw_mime or "/" not in str(raw_mime) or raw_mime in ["image", "file", "video"]:
+                guessed, _ = mimetypes.guess_type(orig_name) or mimetypes.guess_type(saved_fname)
+                mime_type = guessed or "image/jpeg"
+            else:
+                mime_type = raw_mime
+
             att_type = "image" if mime_type.startswith("image/") else "file"
 
-            _log_event(f"Sending ONLY document file for query '{text_content}': doc_id={doc_id}, url={file_url}")
+            # Use our direct live application URL which streams binary with Content-Type & Content-Disposition
+            # This avoids Supabase private bucket 400 errors and Meta crawler rejection
+            file_url = f"https://docs-manager-five.vercel.app/api/documents/{doc_id}/file/{saved_fname}"
+
+            _log_event(f"Sending ONLY document file for query '{text_content}': doc_id={doc_id}, mime={mime_type}, att_type={att_type}, url={file_url}")
 
             # Send strictly ONLY the file — no conversation, paragraph, or text explanation
             send_reply(

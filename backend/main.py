@@ -328,17 +328,29 @@ def get_document_details(doc_id: str):
 
 
 @app.get("/api/documents/{doc_id}/file")
-def get_document_file(doc_id: str, download: bool = False):
+@app.get("/api/documents/{doc_id}/file/{filename}")
+def get_document_file(doc_id: str, filename: Optional[str] = None, download: bool = False):
     """Streams the document binary directly from Supabase Storage bucket."""
     doc = database.get_document(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    filename = doc.get("original_filename") or doc.get("saved_filename") or f"{doc_id}.bin"
-    mime_type = doc.get("mime_type", "application/octet-stream")
-    headers = {}
+    fname = filename or doc.get("original_filename") or doc.get("saved_filename") or f"{doc_id}.bin"
+    raw_mime = doc.get("mime_type", "application/octet-stream")
+    if not raw_mime or "/" not in raw_mime or raw_mime in ["image", "file", "video"]:
+        guessed, _ = mimetypes.guess_type(fname)
+        mime_type = guessed or "image/jpeg"
+    else:
+        mime_type = raw_mime
+
+    headers = {
+        "Content-Type": mime_type,
+        "Accept-Ranges": "bytes",
+    }
     if download:
-        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    else:
+        headers["Content-Disposition"] = f'inline; filename="{fname}"'
 
     storage_path = doc.get("storage_path") or f"uploads/{doc.get('saved_filename')}"
     file_bytes = supabase_client.download_from_supabase_bucket(storage_path)

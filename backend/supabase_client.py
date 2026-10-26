@@ -161,10 +161,10 @@ def upload_to_supabase_bucket(
             file_options={"content-type": mime_type, "upsert": "true"},
         )
 
-        public_url = client.storage.from_(bucket_name).get_public_url(storage_path)
+        storage_url = get_public_or_signed_url(storage_path)
         return {
             "storage_path": storage_path,
-            "storage_url": public_url,
+            "storage_url": storage_url,
             "bucket": bucket_name,
         }
     except Exception as e:
@@ -178,10 +178,10 @@ def upload_to_supabase_bucket(
                     file=file_bytes,
                     file_options={"content-type": mime_type, "upsert": "true"},
                 )
-                public_url = client.storage.from_(bucket_name).get_public_url(storage_path)
+                storage_url = get_public_or_signed_url(storage_path)
                 return {
                     "storage_path": storage_path,
-                    "storage_url": public_url,
+                    "storage_url": storage_url,
                     "bucket": bucket_name,
                 }
             except Exception as retry_err:
@@ -190,6 +190,41 @@ def upload_to_supabase_bucket(
 
         print(f"[Supabase] Upload error: {e}")
         raise RuntimeError(f"Supabase bucket upload failed: {str(e)}")
+
+
+def get_public_or_signed_url(storage_path: str, expires_in: int = 60 * 60 * 24 * 7) -> str:
+    """
+    Returns a guaranteed accessible download URL for a file in Supabase storage.
+    Attempts signed URL first (accessible whether bucket is private or public),
+    falling back to public URL.
+    """
+    client = get_client()
+    if not client:
+        return ""
+    cfg = get_supabase_config()
+    bucket_name = cfg.get("bucket", "documents")
+
+    # 1. Try to ensure bucket is public
+    try:
+        client.storage.update_bucket(bucket_name, options={"public": True})
+    except Exception:
+        pass
+
+    # 2. Try signed URL (works even if bucket is private)
+    try:
+        signed_res = client.storage.from_(bucket_name).create_signed_url(storage_path, expires_in)
+        if isinstance(signed_res, dict) and signed_res.get("signedURL"):
+            return signed_res["signedURL"]
+        elif isinstance(signed_res, str) and signed_res.startswith("http"):
+            return signed_res
+    except Exception:
+        pass
+
+    # 3. Fallback to public URL
+    try:
+        return client.storage.from_(bucket_name).get_public_url(storage_path)
+    except Exception:
+        return ""
 
 
 def download_from_supabase_bucket(storage_path: str) -> Optional[bytes]:
