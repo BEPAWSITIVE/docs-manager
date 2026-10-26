@@ -1,3 +1,6 @@
+import hmac
+import hashlib
+import json
 import os
 import uuid
 import mimetypes
@@ -378,14 +381,25 @@ def zernio_webhook_health():
 async def handle_zernio_webhook(
     request: Request,
     x_zernio_event_id: Optional[str] = Header(None),
+    x_zernio_signature: Optional[str] = Header(None),
 ):
     """
     Receives incoming WhatsApp / SMS messages & media uploads from Zernio.
+    Signature check is optional: only enforced if ZERNIO_WEBHOOK_SECRET is set in Vercel.
     - If media uploaded: Analyzes with Gemini Multimodal OCR -> stores in Supabase -> replies '👍'.
     - If natural language query: Searches structured metadata via Gemini AI -> replies with document.
     """
+    raw_body = await request.body()
+    secret = os.getenv("ZERNIO_WEBHOOK_SECRET", "").strip()
+
+    if secret and x_zernio_signature:
+        expected_sig = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        clean_sig = x_zernio_signature.replace("sha256=", "").strip()
+        if not hmac.compare_digest(expected_sig, clean_sig):
+            return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid webhook signature"})
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
     except Exception as e:
         return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid JSON: {e}"})
 
