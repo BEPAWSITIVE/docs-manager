@@ -407,3 +407,13 @@ async def handle_zernio_webhook(
     result = zernio_client.process_incoming_zernio_event(payload)
     return {"status": "success", "result": result}
 
+
+@app.get("/api/zernio/logs")
+def get_zernio_debug_logs():
+    """Returns recent webhook activity logs for diagnostics."""
+    return {
+        "status": "online",
+        "recent_logs": zernio_client.get_recent_webhook_logs(),
+    }
+
+
