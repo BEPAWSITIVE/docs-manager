@@ -406,8 +406,14 @@ async def handle_zernio_webhook(
         return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid JSON: {e}"})
 
     # Process the message/document directly
-    result = zernio_client.process_incoming_zernio_event(payload)
-    return {"status": "success", "result": result}
+    try:
+        result = zernio_client.process_incoming_zernio_event(payload)
+        return {"status": "success", "result": result}
+    except Exception as exc:
+        import traceback
+        err_trace = traceback.format_exc()
+        zernio_client._log_event(f"Webhook processing error: {exc}", {"error": str(exc), "trace": err_trace, "payload": payload})
+        return JSONResponse(status_code=200, content={"status": "handled_with_error", "error": str(exc)})
 
 
 @app.get("/api/zernio/logs")
@@ -420,17 +426,27 @@ def get_zernio_debug_logs():
 
 
 @app.get("/api/zernio/diagnostics")
-def get_zernio_diagnostics():
-    """Queries Zernio API directly to inspect configured webhooks, accounts, and logs."""
+def get_zernio_diagnostics(path: Optional[str] = None):
+    """Queries Zernio API directly to inspect configured webhooks, accounts, conversations, and logs."""
     import httpx
     api_key = zernio_client.get_zernio_api_key()
     if not api_key:
         return {"error": "ZERNIO_API_KEY is not configured"}
 
     headers = {"Authorization": f"Bearer {api_key}"}
-    results = {}
 
-    with httpx.Client(timeout=8.0) as client:
+    with httpx.Client(timeout=10.0) as client:
+        # If custom path requested:
+        if path:
+            clean_path = path if path.startswith("/") else f"/{path}"
+            try:
+                r = client.get(f"https://api.zernio.com{clean_path}", headers=headers)
+                return r.json() if r.status_code == 200 else {"status": r.status_code, "text": r.text}
+            except Exception as e:
+                return {"error": str(e)}
+
+        results = {}
+
         # 1. Webhook Settings
         try:
             wh_res = client.get("https://api.zernio.com/v1/webhooks/settings", headers=headers)
@@ -445,9 +461,16 @@ def get_zernio_diagnostics():
         except Exception as e:
             results["accounts"] = {"error": str(e)}
 
-        # 3. Recent Activity Logs
+        # 3. Recent Inbox Conversations
         try:
-            logs_res = client.get("https://api.zernio.com/v1/logs?type=all&limit=15", headers=headers)
+            conv_res = client.get("https://api.zernio.com/v1/inbox/conversations?limit=10", headers=headers)
+            results["conversations"] = conv_res.json() if conv_res.status_code == 200 else {"status": conv_res.status_code, "text": conv_res.text}
+        except Exception as e:
+            results["conversations"] = {"error": str(e)}
+
+        # 4. Recent Activity Logs
+        try:
+            logs_res = client.get("https://api.zernio.com/v1/logs?limit=25", headers=headers)
             results["logs"] = logs_res.json() if logs_res.status_code == 200 else {"status": logs_res.status_code, "text": logs_res.text}
         except Exception as e:
             results["logs"] = {"error": str(e)}

@@ -59,12 +59,12 @@ def send_conversation_reply(
     payload: Dict[str, Any] = {
         "accountId": account_id,
         "message": text,
+        "text": text,
     }
 
     if attachment_url:
-        payload["attachment"] = {
-            "url": attachment_url,
-        }
+        payload["attachments"] = [{"url": attachment_url}]
+        payload["attachment"] = {"url": attachment_url}
 
     try:
         with httpx.Client(timeout=8.0) as client:
@@ -77,6 +77,31 @@ def send_conversation_reply(
     except Exception as e:
         _log_event(f"Inbox send error: {e}")
         return False
+
+
+def find_conversation_by_phone(account_id: str, phone: str) -> Optional[str]:
+    """Finds existing conversation for a contact by phone number from Zernio Inbox."""
+    api_key = get_zernio_api_key()
+    if not api_key or not phone:
+        return None
+    try:
+        clean_phone = phone.replace("+", "").replace(" ", "").replace("-", "")
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{ZERNIO_API_BASE}/inbox/conversations",
+                params={"accountId": account_id, "limit": 25},
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            if resp.status_code == 200:
+                convs = resp.json().get("conversations", [])
+                for c in convs:
+                    contact = c.get("contact") or {}
+                    c_phone = str(contact.get("phone") or contact.get("phoneNumber") or c.get("participantId") or "").replace("+", "").replace(" ", "").replace("-", "")
+                    if clean_phone and (clean_phone in c_phone or c_phone in clean_phone):
+                        return c.get("_id") or c.get("id") or c.get("conversationId")
+    except Exception as ex:
+        _log_event(f"Error finding conversation by phone: {ex}")
+    return None
 
 
 def send_direct_sms_reply(
@@ -156,15 +181,19 @@ def send_reply(
 def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Processes incoming Zernio webhook events.
-    Supports both WhatsApp and SMS formats, nested and flat schemas.
+    Supports both WhatsApp and SMS formats, nested and flat schemas,
+    dictionary text fields, and image/document attachments.
     """
     _log_event("Webhook received", event_data)
 
-    event_id = event_data.get("id")
-    event_type = event_data.get("event") or event_data.get("type")
+    # Unwrap possible data wrapper
+    data = event_data.get("data") if isinstance(event_data.get("data"), dict) else event_data
+
+    event_id = event_data.get("id") or data.get("id")
+    event_type = event_data.get("event") or event_data.get("type") or data.get("event") or data.get("type")
 
     # Handle test webhooks from Zernio dashboard
-    if event_type in ["test", "webhook.test"]:
+    if event_type in ["test", "webhook.test", "ping"]:
         _log_event("Zernio test event acknowledged")
         return {"status": "success", "message": "Test webhook verified"}
 
@@ -178,66 +207,143 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
             _processed_events.clear()
 
     # Extract message object (nested in 'message' or at root)
-    message_data = event_data.get("message")
+    message_data = data.get("message") or event_data.get("message")
     if not isinstance(message_data, dict):
-        message_data = event_data
+        message_data = data
 
     # Ignore outbound messages sent by our bot
-    direction = message_data.get("direction", "inbound")
-    if direction == "outbound":
-        _log_event("Ignoring outbound message echo")
+    direction = str(message_data.get("direction") or data.get("direction") or event_data.get("direction") or "inbound").lower()
+    if direction in ["outbound", "out", "sent"]:
+        _log_event(f"Ignoring outbound message echo (direction={direction})")
         return {"status": "ignored", "reason": "outbound_message"}
 
     # Resolve conversationId
-    conversation = event_data.get("conversation", {})
+    conversation = data.get("conversation") or event_data.get("conversation") or {}
+    if not isinstance(conversation, dict):
+        conversation = {}
+
     conversation_id = (
         conversation.get("conversationId")
+        or conversation.get("id")
+        or conversation.get("_id")
         or message_data.get("conversationId")
+        or message_data.get("conversation_id")
+        or message_data.get("id")
+        or data.get("conversationId")
         or event_data.get("conversationId")
     )
 
     # Resolve accountId / profileId
-    account = event_data.get("account", {})
+    account = data.get("account") or event_data.get("account") or {}
+    if not isinstance(account, dict):
+        account = {}
+
     account_id = (
         account.get("accountId")
+        or account.get("id")
+        or account.get("_id")
         or account.get("profileId")
+        or data.get("accountId")
         or event_data.get("accountId")
         or message_data.get("accountId")
     )
+    if not account_id:
+        # Default to known WhatsApp account ID if not provided
+        account_id = "6adf16ad9c74a0a97edb9b33"
 
     # Resolve Sender & Recipient Phone Numbers (crucial for SMS and fallback)
-    sender_obj = message_data.get("sender", {})
-    sender_phone = (
-        (sender_obj.get("phoneNumber") if isinstance(sender_obj, dict) else None)
-        or (sender_obj.get("id") if isinstance(sender_obj, dict) else None)
-        or message_data.get("from")
-        or event_data.get("from")
-    )
+    sender_obj = message_data.get("sender") or data.get("sender") or {}
+    sender_phone = None
+    if isinstance(sender_obj, dict):
+        sender_phone = (
+            sender_obj.get("phoneNumber")
+            or sender_obj.get("phone")
+            or sender_obj.get("id")
+        )
+    elif isinstance(sender_obj, str):
+        sender_phone = sender_obj
 
-    recipient_obj = message_data.get("recipient", {})
-    recipient_phone = (
-        (recipient_obj.get("phoneNumber") if isinstance(recipient_obj, dict) else None)
-        or (recipient_obj.get("id") if isinstance(recipient_obj, dict) else None)
-        or message_data.get("to")
-        or event_data.get("to")
-    )
+    contact_obj = conversation.get("contact") or data.get("contact") or {}
+    if not sender_phone and isinstance(contact_obj, dict):
+        sender_phone = contact_obj.get("phone") or contact_obj.get("phoneNumber") or contact_obj.get("id")
+
+    if not sender_phone:
+        sender_phone = message_data.get("from") or data.get("from") or event_data.get("from")
+
+    recipient_obj = message_data.get("recipient") or data.get("recipient") or {}
+    recipient_phone = None
+    if isinstance(recipient_obj, dict):
+        recipient_phone = (
+            recipient_obj.get("phoneNumber")
+            or recipient_obj.get("phone")
+            or recipient_obj.get("id")
+        )
+    elif isinstance(recipient_obj, str):
+        recipient_phone = recipient_obj
+
+    if not recipient_phone:
+        recipient_phone = message_data.get("to") or data.get("to") or event_data.get("to")
+
+    # If conversation_id is still missing, attempt lookup by phone from Zernio Inbox
+    if not conversation_id and sender_phone and account_id:
+        conversation_id = find_conversation_by_phone(account_id, str(sender_phone))
+        if conversation_id:
+            _log_event(f"Resolved conversation_id from contact phone {sender_phone}: {conversation_id}")
 
     platform = (
         message_data.get("platform")
+        or account.get("platform")
         or conversation.get("platform")
+        or data.get("platform")
+        or event_data.get("platform")
         or ("sms" if (sender_phone and not conversation_id) else "whatsapp")
     )
 
-    # Extract attachments and text
-    attachments = message_data.get("attachments", [])
-    if not attachments and message_data.get("mediaUrls"):
-        attachments = [{"url": u} for u in message_data.get("mediaUrls", [])]
+    # Extract attachments safely (supports 'attachments' and 'mediaUrls', 'url' and 'mediaUrl')
+    raw_attachments = (
+        message_data.get("attachments")
+        or data.get("attachments")
+        or event_data.get("attachments")
+        or []
+    )
+    if not raw_attachments:
+        media_urls = message_data.get("mediaUrls") or data.get("mediaUrls") or []
+        if media_urls:
+            raw_attachments = [{"url": u} for u in media_urls]
 
-    text_content = (message_data.get("text") or message_data.get("body") or "").strip()
+    attachments = []
+    if isinstance(raw_attachments, list):
+        for att in raw_attachments:
+            if isinstance(att, dict):
+                m_url = att.get("url") or att.get("mediaUrl") or att.get("sourceUrl")
+                if m_url:
+                    attachments.append({
+                        "url": m_url,
+                        "type": att.get("contentType") or att.get("mimeType") or att.get("type") or "image/jpeg",
+                        "filename": att.get("filename") or att.get("name"),
+                    })
+            elif isinstance(att, str) and att.startswith("http"):
+                attachments.append({"url": att, "type": "image/jpeg", "filename": None})
+
+    # Extract text content safely (WhatsApp sends {"body": "..."}, Instagram sends str or null)
+    text_content = ""
+    raw_text = (
+        message_data.get("text")
+        or message_data.get("body")
+        or message_data.get("caption")
+        or data.get("text")
+        or event_data.get("text")
+    )
+    if isinstance(raw_text, dict):
+        text_content = str(raw_text.get("body") or raw_text.get("text") or "").strip()
+    elif isinstance(raw_text, str):
+        text_content = raw_text.strip()
+    elif raw_text is not None:
+        text_content = str(raw_text).strip()
 
     _log_event(
         f"Parsed message: platform={platform}, conv_id={conversation_id}, "
-        f"from={sender_phone}, has_attachments={bool(attachments)}, text='{text_content}'"
+        f"account_id={account_id}, from={sender_phone}, has_attachments={bool(attachments)}, text='{text_content}'"
     )
 
     # =========================================================================
@@ -245,21 +351,29 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     # =========================================================================
     if attachments:
         processed_count = 0
+        api_key = get_zernio_api_key()
+
         for att in attachments:
             media_url = att.get("url")
             if not media_url:
                 continue
 
             try:
-                # 1. Download media bytes
-                with httpx.Client(timeout=10.0) as http_client:
-                    media_resp = http_client.get(media_url)
+                # 1. Download media bytes (pass auth header if fetching from Zernio)
+                dl_headers = {}
+                if "zernio.com" in media_url and api_key:
+                    dl_headers["Authorization"] = f"Bearer {api_key}"
+
+                with httpx.Client(timeout=10.0, follow_redirects=True) as http_client:
+                    media_resp = http_client.get(media_url, headers=dl_headers)
                     if media_resp.status_code != 200:
                         _log_event(f"Failed to download media from {media_url}: status {media_resp.status_code}")
                         continue
                     file_bytes = media_resp.content
 
                 mime_type = att.get("type") or media_resp.headers.get("content-type") or "image/jpeg"
+                if not mime_type or mime_type == "application/octet-stream":
+                    mime_type = "image/jpeg"
                 file_ext = mimetypes.guess_extension(mime_type) or ".jpg"
                 doc_id = uuid.uuid4().hex[:12]
                 saved_filename = f"{doc_id}{file_ext}"
