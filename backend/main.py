@@ -426,7 +426,7 @@ def get_zernio_debug_logs():
 
 
 @app.get("/api/zernio/diagnostics")
-def get_zernio_diagnostics(path: Optional[str] = None):
+def get_zernio_diagnostics(zernio_path: Optional[str] = None):
     """Queries Zernio API directly to inspect configured webhooks, accounts, conversations, and logs."""
     import httpx
     api_key = zernio_client.get_zernio_api_key()
@@ -437,8 +437,8 @@ def get_zernio_diagnostics(path: Optional[str] = None):
 
     with httpx.Client(timeout=10.0) as client:
         # If custom path requested:
-        if path:
-            clean_path = path if path.startswith("/") else f"/{path}"
+        if zernio_path:
+            clean_path = zernio_path if zernio_path.startswith("/") else f"/{zernio_path}"
             try:
                 r = client.get(f"https://api.zernio.com{clean_path}", headers=headers)
                 return r.json() if r.status_code == 200 else {"status": r.status_code, "text": r.text}
