@@ -379,20 +379,25 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         f"account_id={account_id}, from={sender_phone}, has_attachments={bool(attachments)}, text='{text_content}'"
     )
 
-    # Check whether sender is an authorized owner
+    # Check whether sender is an authorized owner and whether upload is permitted
     is_owner = database.is_phone_authorized(sender_phone)
-    _log_event(f"Owner authorization verification for '{sender_phone}': is_owner={is_owner}")
+    upload_allowed = database.is_upload_allowed(sender_phone)
+    _log_event(f"Authorization check for '{sender_phone}': is_owner={is_owner}, upload_allowed={upload_allowed}")
 
     # =========================================================================
     # Case 1: User uploaded document / image attachment
     # =========================================================================
     if attachments:
-        if not is_owner:
+        if not upload_allowed:
             _log_event(
-                f"[Security] Unauthorized upload attempt from {sender_phone} silently ignored. "
-                "Only authorized owner phone numbers can upload documents."
+                f"[Security Policy] Upload attempt from {sender_phone} silently ignored. "
+                "allow_random_uploads is disabled and sender is not an authorized owner."
             )
-            return {"status": "unauthorized_upload_ignored", "sender": sender_phone}
+            return {
+                "status": "unauthorized_upload_ignored",
+                "sender": sender_phone,
+                "reason": "random_uploads_disabled",
+            }
 
         processed_count = 0
         api_key = get_zernio_api_key()

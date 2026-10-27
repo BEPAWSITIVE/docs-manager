@@ -393,6 +393,7 @@ DEFAULT_SEED_CLIENTS = [
         "normalized_phone": "917678106554",
         "notes": "Verified Owner (WhatsApp +1 864-947-4753 Gateway)",
         "is_active": True,
+        "allow_random_uploads": False,
         "created_at": "2026-10-27T10:00:00Z",
         "updated_at": "2026-10-27T10:00:00Z",
     }
@@ -481,3 +482,46 @@ def delete_client_from_db(client_id: str) -> bool:
             print(f"[Supabase] authorized_clients delete notice: {e}")
 
     return True
+
+
+# =============================================================================
+# System Configuration & Upload Customization Policies
+# =============================================================================
+
+SYSTEM_SETTINGS_FILE = STORAGE_DIR / "system_settings.json"
+
+DEFAULT_SYSTEM_SETTINGS = {
+    "allow_random_uploads": False,
+    "strict_owner_fetch": True,
+}
+
+
+def get_system_settings() -> Dict[str, Any]:
+    """Retrieves system-wide settings like allow_random_uploads."""
+    try:
+        if SYSTEM_SETTINGS_FILE.exists():
+            data = json.loads(SYSTEM_SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {**DEFAULT_SYSTEM_SETTINGS, **data}
+    except Exception as e:
+        print(f"[Settings] Error reading settings: {e}")
+
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        SYSTEM_SETTINGS_FILE.write_text(json.dumps(DEFAULT_SYSTEM_SETTINGS, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return dict(DEFAULT_SYSTEM_SETTINGS)
+
+
+def save_system_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Persists updated system-wide settings."""
+    current = get_system_settings()
+    current.update(settings)
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        SYSTEM_SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[Settings] Error saving settings: {e}")
+    return current
+

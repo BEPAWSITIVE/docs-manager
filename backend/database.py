@@ -97,10 +97,12 @@ def save_client(
     phone_number: str,
     notes: str = "",
     is_active: bool = True,
+    allow_random_uploads: bool = False,
     client_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Onboards or updates a client with an authorized owner phone number.
+    Onboards or updates a client with an authorized owner phone number
+    and document upload policy.
     """
     cid = client_id or f"client_{uuid.uuid4().hex[:10]}"
     norm_phone = normalize_phone(phone_number)
@@ -113,6 +115,7 @@ def save_client(
         "normalized_phone": norm_phone,
         "notes": (notes or "").strip(),
         "is_active": bool(is_active),
+        "allow_random_uploads": bool(allow_random_uploads),
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -129,7 +132,7 @@ def update_client(client_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
         return None
 
     updated = dict(existing)
-    for field in ["name", "phone_number", "notes", "is_active"]:
+    for field in ["name", "phone_number", "notes", "is_active", "allow_random_uploads"]:
         if field in updates and updates[field] is not None:
             updated[field] = updates[field]
 
@@ -144,6 +147,42 @@ def update_client(client_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
 def delete_client(client_id: str) -> bool:
     """Deletes an onboarded client by client_id."""
     return supabase_client.delete_client_from_db(client_id)
+
+
+def get_system_settings() -> Dict[str, Any]:
+    """Retrieves system-wide settings like global allow_random_uploads."""
+    return supabase_client.get_system_settings()
+
+
+def save_system_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Saves system-wide settings."""
+    return supabase_client.save_system_settings(settings)
+
+
+def is_upload_allowed(phone: Optional[str]) -> bool:
+    """
+    Determines if document upload is allowed for the given sender.
+    - If sender is an authorized owner -> ALWAYS allowed.
+    - If global 'allow_random_uploads' setting is True -> allowed.
+    - If any active client has 'allow_random_uploads' set to True -> allowed.
+    - Otherwise -> rejected (only owners can upload).
+    """
+    if is_phone_authorized(phone):
+        return True
+
+    # Check global system setting
+    sys_settings = get_system_settings()
+    if sys_settings.get("allow_random_uploads", False):
+        return True
+
+    # Check per-client customization toggle
+    clients = list_clients()
+    for client in clients:
+        if client.get("is_active", True) and client.get("allow_random_uploads", False):
+            return True
+
+    return False
+
 
 
 def is_phone_authorized(phone: Optional[str]) -> bool:

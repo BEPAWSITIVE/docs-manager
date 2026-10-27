@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 
 export default function DocsManagerPage() {
   // State
@@ -18,20 +19,6 @@ export default function DocsManagerPage() {
   const [isSupabaseEnabled, setIsSupabaseEnabled] = useState(false);
   const [settingsTab, setSettingsTab] = useState('status'); // 'status' | 'sql'
   const [copiedSql, setCopiedSql] = useState(false);
-
-  // Admin Panel & Client Onboarding State
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [clients, setClients] = useState([]);
-  const [loadingClients, setLoadingClients] = useState(false);
-  const [clientForm, setClientForm] = useState({
-    name: '',
-    phone_number: '',
-    notes: '',
-    is_active: true,
-  });
-  const [clientFormSubmitting, setClientFormSubmitting] = useState(false);
-  const [clientFormError, setClientFormError] = useState('');
-  const [clientFormSuccess, setClientFormSuccess] = useState('');
 
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -72,94 +59,10 @@ export default function DocsManagerPage() {
       }
 
       fetchStoredDocuments();
-      fetchClients();
     };
 
     initConfig();
   }, []);
-
-  const fetchClients = async () => {
-    try {
-      setLoadingClients(true);
-      const res = await fetch('/api/clients');
-      if (res.ok) {
-        const data = await res.json();
-        setClients(data.clients || []);
-      }
-    } catch (err) {
-      console.log('Error fetching clients:', err);
-    } finally {
-      setLoadingClients(false);
-    }
-  };
-
-  const handleOnboardClient = async (e) => {
-    e.preventDefault();
-    setClientFormError('');
-    setClientFormSuccess('');
-
-    if (!clientForm.name.trim()) {
-      setClientFormError('Please enter a client / owner name.');
-      return;
-    }
-    if (!clientForm.phone_number.trim()) {
-      setClientFormError('Please enter the owner WhatsApp phone number.');
-      return;
-    }
-
-    try {
-      setClientFormSubmitting(true);
-      const res = await fetch('/api/clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(clientForm),
-      });
-
-      if (res.ok) {
-        setClientFormSuccess(`Owner "${clientForm.name}" onboarded successfully!`);
-        setClientForm({ name: '', phone_number: '', notes: '', is_active: true });
-        fetchClients();
-      } else {
-        const err = await res.json();
-        setClientFormError(err.detail || 'Failed to onboard client.');
-      }
-    } catch (err) {
-      setClientFormError('Network error while onboarding client.');
-    } finally {
-      setClientFormSubmitting(false);
-    }
-  };
-
-  const handleToggleClientStatus = async (clientId, currentStatus) => {
-    try {
-      const res = await fetch(`/api/clients/${clientId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !currentStatus }),
-      });
-      if (res.ok) {
-        fetchClients();
-      }
-    } catch (err) {
-      console.log('Error updating client status:', err);
-    }
-  };
-
-  const handleDeleteClient = async (clientId, clientName) => {
-    if (!confirm(`Are you sure you want to remove owner access for "${clientName}"?`)) {
-      return;
-    }
-    try {
-      const res = await fetch(`/api/clients/${clientId}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        fetchClients();
-      }
-    } catch (err) {
-      console.log('Error deleting client:', err);
-    }
-  };
 
   const fetchStoredDocuments = async () => {
     try {
@@ -595,13 +498,10 @@ WITH CHECK (true);`;
                 <path d="M12 2C6.477 2 2 6.477 2 12c0 1.821.487 3.53 1.338 5L2 22l5.197-1.309A9.957 9.957 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z" />
               </svg>
             </button>
-            <button
-              className={`rail-btn ${isAdminOpen ? 'active' : ''}`}
-              title="Admin Panel: Client Onboarding & Owner Access"
-              onClick={() => {
-                setIsAdminOpen(true);
-                fetchClients();
-              }}
+            <Link
+              href="/admin"
+              className="rail-btn"
+              title="Admin Panel • Client Onboarding & Settings"
             >
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
@@ -609,7 +509,7 @@ WITH CHECK (true);`;
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
               </svg>
-            </button>
+            </Link>
           </div>
           <div className="rail-bottom">
             <button className="rail-btn" title="Settings & API Key" onClick={() => setIsSettingsOpen(true)}>
@@ -638,17 +538,14 @@ WITH CHECK (true);`;
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
+              <Link
+                href="/admin"
                 className="top-action-btn mobile-sidebar-settings-btn"
-                title="Client Onboarding"
-                onClick={() => {
-                  setIsAdminOpen(true);
-                  fetchClients();
-                }}
-                aria-label="Client Onboarding"
+                title="Admin Panel • Client Onboarding"
+                aria-label="Admin Panel"
               >
                 <span style={{ fontSize: 16 }}>👑</span>
-              </button>
+              </Link>
               <button
                 className="top-action-btn mobile-sidebar-settings-btn"
                 title="Settings"
@@ -726,18 +623,14 @@ WITH CHECK (true);`;
               </div>
             </div>
             <div className="chat-top-actions">
-              <button
-                type="button"
+              <Link
+                href="/admin"
                 className="admin-badge-btn"
-                title="Client Onboarding & Owner Numbers"
-                onClick={() => {
-                  setIsAdminOpen(true);
-                  fetchClients();
-                }}
+                title="Admin Panel • Client Onboarding & Owner Settings"
               >
                 <span className="admin-badge-icon">👑</span>
-                <span className="admin-badge-text">Onboard Clients</span>
-              </button>
+                <span className="admin-badge-text">Admin Panel</span>
+              </Link>
               <button
                 type="button"
                 className="top-action-btn"
@@ -1140,205 +1033,6 @@ CREATE TABLE IF NOT EXISTS authorized_clients (
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Client Onboarding & Owner Access Admin Panel Modal */}
-      {isAdminOpen && (
-        <div className="modal-overlay" onClick={() => setIsAdminOpen(false)}>
-          <div className="admin-modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="admin-modal-crown">👑</span>
-                <div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: '#111b21' }}>
-                    Client Onboarding & Owner Access
-                  </div>
-                  <div style={{ fontSize: 12, color: '#667781', fontWeight: 400 }}>
-                    Register authorized owner numbers for WhatsApp document upload and retrieval.
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="modal-close-btn"
-                onClick={() => setIsAdminOpen(false)}
-                aria-label="Close"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: 20,
-                  cursor: 'pointer',
-                  color: '#667781',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Security Policy Banner */}
-            <div className="admin-policy-banner" style={{ marginTop: 14 }}>
-              <span className="policy-badge">Strict Owner Authorization</span>
-              <div className="policy-desc">
-                <strong>Authorized Owner Numbers:</strong> Can upload docs and fetch docs via AI WhatsApp chat.<br />
-                <strong>Non-Owner / Other Numbers:</strong> Cannot fetch docs. For them, AI will <strong>NOT respond anything</strong> for the fetch request (complete silence).
-              </div>
-            </div>
-
-            {/* Metrics */}
-            <div className="admin-stats-row">
-              <div className="admin-stat-card">
-                <div className="stat-label">Total Onboarded Clients</div>
-                <div className="stat-value">{clients.length}</div>
-              </div>
-              <div className="admin-stat-card">
-                <div className="stat-label">Active Owner Numbers</div>
-                <div className="stat-value active-val">
-                  {clients.filter((c) => c.is_active).length}
-                </div>
-              </div>
-              <div className="admin-stat-card">
-                <div className="stat-label">AI WhatsApp Gateway</div>
-                <div className="stat-value text-sm">+1 864-947-4753</div>
-              </div>
-            </div>
-
-            {/* Client Onboarding Form */}
-            <div className="admin-section-box">
-              <div className="admin-section-title">
-                <span>➕</span> Onboard New Client / Owner
-              </div>
-              <form onSubmit={handleOnboardClient}>
-                <div className="form-grid-3">
-                  <div className="form-group mb-0">
-                    <label className="form-label">Client Name *</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. Shivam Sharma"
-                      value={clientForm.name}
-                      onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="form-group mb-0">
-                    <label className="form-label">Owner WhatsApp Number *</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. +91 7678106554"
-                      value={clientForm.phone_number}
-                      onChange={(e) => setClientForm({ ...clientForm, phone_number: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="form-group mb-0">
-                    <label className="form-label">Notes / Company (Optional)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. Verified Owner"
-                      value={clientForm.notes}
-                      onChange={(e) => setClientForm({ ...clientForm, notes: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                {clientFormError && <div className="admin-form-msg error">{clientFormError}</div>}
-                {clientFormSuccess && <div className="admin-form-msg success">{clientFormSuccess}</div>}
-
-                <div className="form-action-row">
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                    disabled={clientFormSubmitting}
-                  >
-                    {clientFormSubmitting ? 'Onboarding...' : 'Onboard Client & Grant Access'}
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* Clients List Table */}
-            <div className="admin-section-box">
-              <div className="admin-section-title-between">
-                <div>
-                  <span>📋</span> Authorized Owner Phone Numbers ({clients.length})
-                </div>
-                <button
-                  type="button"
-                  className="sql-copy-btn"
-                  onClick={fetchClients}
-                  title="Refresh Clients List"
-                >
-                  🔄 Refresh
-                </button>
-              </div>
-
-              {loadingClients ? (
-                <div style={{ padding: 20, textAlign: 'center', color: '#667781', fontSize: 13 }}>
-                  Loading authorized clients...
-                </div>
-              ) : clients.length === 0 ? (
-                <div style={{ padding: 20, textAlign: 'center', color: '#667781', fontSize: 13 }}>
-                  No clients onboarded yet. Add your first client above.
-                </div>
-              ) : (
-                <div className="clients-table-wrapper">
-                  <table className="clients-table">
-                    <thead>
-                      <tr>
-                        <th>Client Name</th>
-                        <th>WhatsApp Number</th>
-                        <th>Status</th>
-                        <th>Notes</th>
-                        <th style={{ textAlign: 'right' }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {clients.map((c) => (
-                        <tr key={c.client_id}>
-                          <td className="client-name-cell">
-                            <strong>{c.name}</strong>
-                          </td>
-                          <td>
-                            <code className="phone-code">{c.phone_number}</code>
-                          </td>
-                          <td>
-                            <button
-                              type="button"
-                              className={`status-pill-btn ${c.is_active ? 'active' : 'inactive'}`}
-                              onClick={() => handleToggleClientStatus(c.client_id, c.is_active)}
-                              title="Click to toggle access"
-                            >
-                              {c.is_active ? '● Authorized' : '○ Revoked'}
-                            </button>
-                          </td>
-                          <td className="client-notes-cell">{c.notes || '—'}</td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button
-                              type="button"
-                              className="client-del-btn"
-                              onClick={() => handleDeleteClient(c.client_id, c.name)}
-                              title="Remove owner access"
-                            >
-                              🗑️ Remove
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-footer" style={{ marginTop: 12 }}>
-              <button type="button" className="btn-primary" onClick={() => setIsAdminOpen(false)}>
-                Done
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -382,6 +382,7 @@ class ClientOnboardRequest(BaseModel):
     phone_number: str
     notes: Optional[str] = ""
     is_active: Optional[bool] = True
+    allow_random_uploads: Optional[bool] = False
 
 
 class ClientUpdateRequest(BaseModel):
@@ -389,6 +390,12 @@ class ClientUpdateRequest(BaseModel):
     phone_number: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    allow_random_uploads: Optional[bool] = None
+
+
+class SystemSettingsRequest(BaseModel):
+    allow_random_uploads: Optional[bool] = None
+    strict_owner_fetch: Optional[bool] = None
 
 
 @app.get("/api/clients")
@@ -415,6 +422,7 @@ def onboard_new_client(payload: ClientOnboardRequest):
         phone_number=payload.phone_number,
         notes=payload.notes or "",
         is_active=True if payload.is_active is None else bool(payload.is_active),
+        allow_random_uploads=bool(payload.allow_random_uploads),
     )
     return {"status": "success", "client": client}
 
@@ -434,6 +442,27 @@ def delete_onboarded_client(client_id: str):
     """Removes an onboarded client and revokes owner access."""
     success = database.delete_client(client_id)
     return {"status": "success" if success else "error"}
+
+
+@app.get("/api/settings")
+def get_system_settings():
+    """Returns current system configuration policies."""
+    return {
+        "status": "success",
+        "settings": database.get_system_settings(),
+    }
+
+
+@app.post("/api/settings")
+def update_system_settings(payload: SystemSettingsRequest):
+    """Updates system configuration policies like allow_random_uploads."""
+    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    saved = database.save_system_settings(updates)
+    return {
+        "status": "success",
+        "settings": saved,
+    }
+
 
 
 
