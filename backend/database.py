@@ -5,6 +5,8 @@ and Supabase Storage Bucket for binary document files.
 No local disk storage or offline fallbacks.
 """
 from datetime import datetime, timezone
+import re
+import uuid
 from typing import Any, Dict, List, Optional
 from backend import supabase_client
 
@@ -68,3 +70,110 @@ def delete_document(doc_id: str) -> bool:
         supabase_client.delete_from_supabase_bucket(storage_path)
 
     return supabase_client.delete_metadata_from_supabase_db(doc_id)
+
+
+# =============================================================================
+# Client Onboarding & Owner Authorization Functions
+# =============================================================================
+
+def normalize_phone(phone: Optional[str]) -> str:
+    """
+    Normalizes a phone number to digits only.
+    Strips domain identifiers (e.g. '@s.whatsapp.net', '@c.us'), '+', spaces, and dashes.
+    """
+    if not phone:
+        return ""
+    clean = str(phone).split("@")[0].strip()
+    return re.sub(r"\D", "", clean)
+
+
+def list_clients() -> List[Dict[str, Any]]:
+    """Retrieves all onboarded clients."""
+    return supabase_client.get_all_clients_from_db()
+
+
+def save_client(
+    name: str,
+    phone_number: str,
+    notes: str = "",
+    is_active: bool = True,
+    client_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Onboards or updates a client with an authorized owner phone number.
+    """
+    cid = client_id or f"client_{uuid.uuid4().hex[:10]}"
+    norm_phone = normalize_phone(phone_number)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    record = {
+        "client_id": cid,
+        "name": name.strip(),
+        "phone_number": phone_number.strip(),
+        "normalized_phone": norm_phone,
+        "notes": (notes or "").strip(),
+        "is_active": bool(is_active),
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    supabase_client.save_client_to_db(record)
+    return record
+
+
+def update_client(client_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Updates fields on an existing onboarded client."""
+    clients = list_clients()
+    existing = next((c for c in clients if c.get("client_id") == client_id), None)
+    if not existing:
+        return None
+
+    updated = dict(existing)
+    for field in ["name", "phone_number", "notes", "is_active"]:
+        if field in updates and updates[field] is not None:
+            updated[field] = updates[field]
+
+    if "phone_number" in updates and updates["phone_number"]:
+        updated["normalized_phone"] = normalize_phone(str(updates["phone_number"]))
+
+    updated["updated_at"] = datetime.now(timezone.utc).isoformat()
+    supabase_client.save_client_to_db(updated)
+    return updated
+
+
+def delete_client(client_id: str) -> bool:
+    """Deletes an onboarded client by client_id."""
+    return supabase_client.delete_client_from_db(client_id)
+
+
+def is_phone_authorized(phone: Optional[str]) -> bool:
+    """
+    Validates if the provided phone number matches an active onboarded owner.
+    Supports both international prefixes (+91, 91, 1, etc.) and 10-digit matching.
+    """
+    norm_input = normalize_phone(phone)
+    if not norm_input or len(norm_input) < 7:
+        return False
+
+    input_last10 = norm_input[-10:] if len(norm_input) >= 10 else norm_input
+
+    clients = list_clients()
+    for client in clients:
+        if not client.get("is_active", True):
+            continue
+
+        c_phone = client.get("phone_number") or ""
+        c_norm = client.get("normalized_phone") or normalize_phone(c_phone)
+
+        # 1. Exact numeric match
+        if norm_input == c_norm:
+            return True
+
+        # 2. Match on trailing 10 digits
+        if len(norm_input) >= 10 and len(c_norm) >= 10:
+            c_last10 = c_norm[-10:]
+            if input_last10 == c_last10:
+                return True
+
+    return False
+

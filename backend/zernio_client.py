@@ -292,6 +292,9 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     if not sender_phone and isinstance(contact_obj, dict):
         sender_phone = contact_obj.get("phone") or contact_obj.get("phoneNumber") or contact_obj.get("id")
 
+    if not sender_phone and isinstance(conversation, dict):
+        sender_phone = conversation.get("participantId") or (conversation.get("contact") or {}).get("id")
+
     if not sender_phone:
         sender_phone = message_data.get("from") or data.get("from") or event_data.get("from")
 
@@ -376,10 +379,21 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         f"account_id={account_id}, from={sender_phone}, has_attachments={bool(attachments)}, text='{text_content}'"
     )
 
+    # Check whether sender is an authorized owner
+    is_owner = database.is_phone_authorized(sender_phone)
+    _log_event(f"Owner authorization verification for '{sender_phone}': is_owner={is_owner}")
+
     # =========================================================================
     # Case 1: User uploaded document / image attachment
     # =========================================================================
     if attachments:
+        if not is_owner:
+            _log_event(
+                f"[Security] Unauthorized upload attempt from {sender_phone} silently ignored. "
+                "Only authorized owner phone numbers can upload documents."
+            )
+            return {"status": "unauthorized_upload_ignored", "sender": sender_phone}
+
         processed_count = 0
         api_key = get_zernio_api_key()
         uploaded_summaries = []
@@ -518,6 +532,20 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     # Case 2: Natural Language Query (user asking for a document)
     # =========================================================================
     if text_content:
+        # Strict Owner Access Control:
+        # Any number other than an authorized owner CANNOT fetch docs on chat.
+        # For unauthorized numbers, the AI will NOT respond anything (complete silence).
+        if not is_owner:
+            _log_event(
+                f"[Security Policy] Unauthorized fetch query '{text_content}' from {sender_phone} SILENTLY IGNORED. "
+                "AI will NOT respond anything."
+            )
+            return {
+                "status": "unauthorized_fetch_ignored",
+                "sender": sender_phone,
+                "reason": "non_owner_fetch_silently_ignored",
+            }
+
         docs = database.list_documents()
         if not docs:
             send_reply(

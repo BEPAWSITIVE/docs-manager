@@ -377,3 +377,107 @@ def delete_metadata_from_supabase_db(doc_id: str) -> bool:
     except Exception as e:
         print(f"[Supabase] DB Delete error: {e}")
         return False
+
+
+# =============================================================================
+# Client Onboarding & Owner Access Control
+# =============================================================================
+
+AUTHORIZED_CLIENTS_FILE = STORAGE_DIR / "authorized_clients.json"
+
+DEFAULT_SEED_CLIENTS = [
+    {
+        "client_id": "client_primary_owner",
+        "name": "Admin / Primary Owner",
+        "phone_number": "+91 7678106554",
+        "normalized_phone": "917678106554",
+        "notes": "Verified Owner (WhatsApp +1 864-947-4753 Gateway)",
+        "is_active": True,
+        "created_at": "2026-10-27T10:00:00Z",
+        "updated_at": "2026-10-27T10:00:00Z",
+    }
+]
+
+
+def _read_local_clients() -> List[Dict[str, Any]]:
+    """Reads clients from local fallback storage."""
+    try:
+        if AUTHORIZED_CLIENTS_FILE.exists():
+            data = json.loads(AUTHORIZED_CLIENTS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list) and len(data) > 0:
+                return data
+    except Exception as e:
+        print(f"[Clients] Error reading local clients: {e}")
+
+    # Initialize seed if empty
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        AUTHORIZED_CLIENTS_FILE.write_text(json.dumps(DEFAULT_SEED_CLIENTS, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return list(DEFAULT_SEED_CLIENTS)
+
+
+def _write_local_clients(clients: List[Dict[str, Any]]) -> None:
+    """Writes clients to local fallback storage."""
+    try:
+        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        AUTHORIZED_CLIENTS_FILE.write_text(json.dumps(clients, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"[Clients] Error writing local clients: {e}")
+
+
+def get_all_clients_from_db() -> List[Dict[str, Any]]:
+    """Retrieves all onboarded clients from Supabase DB or persistent storage."""
+    client = get_client()
+    if client:
+        try:
+            res = client.table("authorized_clients").select("*").order("created_at", desc=True).execute()
+            if res.data is not None and len(res.data) > 0:
+                _write_local_clients(res.data)
+                return res.data
+        except Exception:
+            # Table might not exist yet; gracefully fallback to local
+            pass
+
+    return _read_local_clients()
+
+
+def save_client_to_db(client_data: Dict[str, Any]) -> bool:
+    """Saves or updates an onboarded client in Supabase DB and fallback storage."""
+    # 1. Update local storage first
+    clients = _read_local_clients()
+    existing_idx = next((i for i, c in enumerate(clients) if c.get("client_id") == client_data.get("client_id")), -1)
+    if existing_idx >= 0:
+        clients[existing_idx] = client_data
+    else:
+        clients.insert(0, client_data)
+    _write_local_clients(clients)
+
+    # 2. Update Supabase table if available
+    client = get_client()
+    if client:
+        try:
+            client.table("authorized_clients").upsert(client_data).execute()
+        except Exception as e:
+            print(f"[Supabase] authorized_clients upsert notice (table may need creation): {e}")
+
+    return True
+
+
+def delete_client_from_db(client_id: str) -> bool:
+    """Deletes an onboarded client by client_id."""
+    # 1. Update local storage
+    clients = _read_local_clients()
+    clients = [c for c in clients if c.get("client_id") != client_id]
+    _write_local_clients(clients)
+
+    # 2. Delete from Supabase
+    client = get_client()
+    if client:
+        try:
+            client.table("authorized_clients").delete().eq("client_id", client_id).execute()
+        except Exception as e:
+            print(f"[Supabase] authorized_clients delete notice: {e}")
+
+    return True

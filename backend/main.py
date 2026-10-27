@@ -374,6 +374,70 @@ def remove_document(doc_id: str):
 
 
 # =============================================================================
+# Client Onboarding & Owner Authorization Endpoints
+# =============================================================================
+
+class ClientOnboardRequest(BaseModel):
+    name: str
+    phone_number: str
+    notes: Optional[str] = ""
+    is_active: Optional[bool] = True
+
+
+class ClientUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@app.get("/api/clients")
+def get_onboarded_clients():
+    """Lists all onboarded clients and authorized owner phone numbers."""
+    clients = database.list_clients()
+    return {
+        "status": "success",
+        "clients": clients,
+        "total": len(clients),
+    }
+
+
+@app.post("/api/clients")
+def onboard_new_client(payload: ClientOnboardRequest):
+    """Onboards a client and registers their authorized phone number."""
+    if not payload.name or not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Client name is required")
+    if not payload.phone_number or not payload.phone_number.strip():
+        raise HTTPException(status_code=400, detail="Owner phone number is required")
+
+    client = database.save_client(
+        name=payload.name,
+        phone_number=payload.phone_number,
+        notes=payload.notes or "",
+        is_active=True if payload.is_active is None else bool(payload.is_active),
+    )
+    return {"status": "success", "client": client}
+
+
+@app.put("/api/clients/{client_id}")
+def update_onboarded_client(client_id: str, payload: ClientUpdateRequest):
+    """Updates an onboarded client's details or active status."""
+    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    updated = database.update_client(client_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return {"status": "success", "client": updated}
+
+
+@app.delete("/api/clients/{client_id}")
+def delete_onboarded_client(client_id: str):
+    """Removes an onboarded client and revokes owner access."""
+    success = database.delete_client(client_id)
+    return {"status": "success" if success else "error"}
+
+
+
+# =============================================================================
 # Zernio (WhatsApp & SMS) Webhook & Integration Endpoints
 # =============================================================================
 
