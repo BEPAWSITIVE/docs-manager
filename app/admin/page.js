@@ -137,6 +137,64 @@ export default function AdminPage() {
     }
   };
 
+  // Instant Auto-Save Toggle for Client-level allow_random_uploads
+  const handleToggleClientRandomUploads = async (checked) => {
+    setEditForm((prev) => ({ ...prev, allow_random_uploads: checked }));
+    if (!selectedClientId) return;
+
+    try {
+      const res = await fetch(`/api/clients/${selectedClientId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allow_random_uploads: checked }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updated = data.client;
+        setClients((prev) =>
+          prev.map((c) => (c.client_id === selectedClientId ? updated : c))
+        );
+        showMessage(
+          checked
+            ? `✓ Random numbers CAN now upload documents for "${updated.name}".`
+            : `✓ Random uploads DISABLED for "${updated.name}" (Owner only).`,
+          'success'
+        );
+      }
+    } catch (err) {
+      showMessage('Error saving upload toggle.', 'error');
+    }
+  };
+
+  // Instant Auto-Save Toggle for Client-level is_active
+  const handleToggleClientActive = async (checked) => {
+    setEditForm((prev) => ({ ...prev, is_active: checked }));
+    if (!selectedClientId) return;
+
+    try {
+      const res = await fetch(`/api/clients/${selectedClientId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: checked }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updated = data.client;
+        setClients((prev) =>
+          prev.map((c) => (c.client_id === selectedClientId ? updated : c))
+        );
+        showMessage(
+          checked
+            ? `✓ Client "${updated.name}" is now AUTHORIZED.`
+            : `✓ Client "${updated.name}" access REVOKED.`,
+          'success'
+        );
+      }
+    } catch (err) {
+      showMessage('Error updating client status.', 'error');
+    }
+  };
+
   // Toggle global allow_random_uploads
   const handleToggleGlobalRandomUploads = async (enabled) => {
     try {
@@ -434,10 +492,8 @@ export default function AdminPage() {
                     <label className="switch-toggle">
                       <input
                         type="checkbox"
-                        checked={editForm.allow_random_uploads}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, allow_random_uploads: e.target.checked })
-                        }
+                        checked={Boolean(editForm.allow_random_uploads)}
+                        onChange={(e) => handleToggleClientRandomUploads(e.target.checked)}
                       />
                       <span className="slider round"></span>
                     </label>
@@ -472,10 +528,8 @@ export default function AdminPage() {
                     <label className="switch-toggle">
                       <input
                         type="checkbox"
-                        checked={editForm.is_active}
-                        onChange={(e) =>
-                          setEditForm({ ...editForm, is_active: e.target.checked })
-                        }
+                        checked={Boolean(editForm.is_active)}
+                        onChange={(e) => handleToggleClientActive(e.target.checked)}
                       />
                       <span className="slider round"></span>
                     </label>

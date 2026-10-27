@@ -302,6 +302,10 @@ def get_all_metadata_from_supabase_db() -> List[Dict[str, Any]]:
         rows = res.data or []
         docs = []
         for r in rows:
+            # Ignore internal system configuration records
+            if str(r.get("doc_id", "")).startswith("__"):
+                continue
+
             saved_fn = r.get("saved_filename") or f"{r.get('doc_id')}.bin"
             doc_record = {
                 "doc_id": r.get("doc_id"),
@@ -429,57 +433,102 @@ def _write_local_clients(clients: List[Dict[str, Any]]) -> None:
 
 
 def get_all_clients_from_db() -> List[Dict[str, Any]]:
-    """Retrieves all onboarded clients from Supabase DB or persistent storage."""
+    """
+    Retrieves all onboarded clients.
+    Checks Supabase DB (table or persistent metadata record) first, then local fallback.
+    """
     client = get_client()
     if client:
+        # 1. Try dedicated table if created
         try:
             res = client.table("authorized_clients").select("*").order("created_at", desc=True).execute()
             if res.data is not None and len(res.data) > 0:
                 _write_local_clients(res.data)
                 return res.data
         except Exception:
-            # Table might not exist yet; gracefully fallback to local
             pass
+
+        # 2. Try persistent config record in documents_metadata
+        try:
+            res = client.table("documents_metadata").select("short_summary").eq("doc_id", "__authorized_clients__").limit(1).execute()
+            if res.data and len(res.data) > 0:
+                raw_json = res.data[0].get("short_summary")
+                if raw_json:
+                    data = json.loads(raw_json)
+                    if isinstance(data, list) and len(data) > 0:
+                        _write_local_clients(data)
+                        return data
+        except Exception as e:
+            print(f"[Supabase] Error reading clients from DB: {e}")
 
     return _read_local_clients()
 
 
 def save_client_to_db(client_data: Dict[str, Any]) -> bool:
-    """Saves or updates an onboarded client in Supabase DB and fallback storage."""
-    # 1. Update local storage first
-    clients = _read_local_clients()
+    """Saves or updates an onboarded client in Supabase DB and persistent storage."""
+    # 1. Update in-memory / local storage
+    clients = get_all_clients_from_db()
     existing_idx = next((i for i, c in enumerate(clients) if c.get("client_id") == client_data.get("client_id")), -1)
     if existing_idx >= 0:
         clients[existing_idx] = client_data
     else:
         clients.insert(0, client_data)
+
     _write_local_clients(clients)
 
-    # 2. Update Supabase table if available
+    # 2. Persist to Supabase DB
     client = get_client()
     if client:
+        # A. Try dedicated table if created
         try:
             client.table("authorized_clients").upsert(client_data).execute()
+        except Exception:
+            pass
+
+        # B. Always persist in documents_metadata record so it survives without needing table creation!
+        try:
+            row = {
+                "doc_id": "__authorized_clients__",
+                "original_filename": "__authorized_clients__",
+                "saved_filename": "__authorized_clients__",
+                "storage_path": "",
+                "mime_type": "application/json",
+                "short_summary": json.dumps(clients),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            client.table("documents_metadata").upsert(row).execute()
         except Exception as e:
-            print(f"[Supabase] authorized_clients upsert notice (table may need creation): {e}")
+            print(f"[Supabase] Error persisting clients to documents_metadata: {e}")
 
     return True
 
 
 def delete_client_from_db(client_id: str) -> bool:
     """Deletes an onboarded client by client_id."""
-    # 1. Update local storage
-    clients = _read_local_clients()
+    clients = get_all_clients_from_db()
     clients = [c for c in clients if c.get("client_id") != client_id]
     _write_local_clients(clients)
 
-    # 2. Delete from Supabase
     client = get_client()
     if client:
         try:
             client.table("authorized_clients").delete().eq("client_id", client_id).execute()
+        except Exception:
+            pass
+
+        try:
+            row = {
+                "doc_id": "__authorized_clients__",
+                "original_filename": "__authorized_clients__",
+                "saved_filename": "__authorized_clients__",
+                "storage_path": "",
+                "mime_type": "application/json",
+                "short_summary": json.dumps(clients),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            client.table("documents_metadata").upsert(row).execute()
         except Exception as e:
-            print(f"[Supabase] authorized_clients delete notice: {e}")
+            print(f"[Supabase] Error deleting client in documents_metadata: {e}")
 
     return True
 
@@ -497,31 +546,60 @@ DEFAULT_SYSTEM_SETTINGS = {
 
 
 def get_system_settings() -> Dict[str, Any]:
-    """Retrieves system-wide settings like allow_random_uploads."""
+    """Retrieves system-wide settings, first checking Supabase DB config record, then local."""
+    client = get_client()
+    if client:
+        try:
+            res = client.table("documents_metadata").select("short_summary").eq("doc_id", "__system_config__").limit(1).execute()
+            if res.data and len(res.data) > 0:
+                raw_cfg = res.data[0].get("short_summary")
+                if raw_cfg:
+                    data = json.loads(raw_cfg)
+                    if isinstance(data, dict):
+                        return {**DEFAULT_SYSTEM_SETTINGS, **data}
+        except Exception as e:
+            print(f"[Supabase] Error reading system settings from DB: {e}")
+
     try:
         if SYSTEM_SETTINGS_FILE.exists():
             data = json.loads(SYSTEM_SETTINGS_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return {**DEFAULT_SYSTEM_SETTINGS, **data}
     except Exception as e:
-        print(f"[Settings] Error reading settings: {e}")
+        print(f"[Settings] Error reading settings from file: {e}")
 
-    try:
-        STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-        SYSTEM_SETTINGS_FILE.write_text(json.dumps(DEFAULT_SYSTEM_SETTINGS, indent=2), encoding="utf-8")
-    except Exception:
-        pass
     return dict(DEFAULT_SYSTEM_SETTINGS)
 
 
 def save_system_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Persists updated system-wide settings."""
+    """Persists updated system-wide settings to Supabase DB and local storage."""
     current = get_system_settings()
     current.update(settings)
+
+    # 1. Save to Supabase DB directly for 100% cloud persistence across all Lambdas
+    client = get_client()
+    if client:
+        try:
+            row = {
+                "doc_id": "__system_config__",
+                "original_filename": "__system_config__",
+                "saved_filename": "__system_config__",
+                "storage_path": "",
+                "mime_type": "application/json",
+                "short_summary": json.dumps(current),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            client.table("documents_metadata").upsert(row).execute()
+        except Exception as e:
+            print(f"[Supabase] Error writing system settings to DB: {e}")
+
+    # 2. Local fallback
     try:
         STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         SYSTEM_SETTINGS_FILE.write_text(json.dumps(current, indent=2), encoding="utf-8")
     except Exception as e:
-        print(f"[Settings] Error saving settings: {e}")
+        print(f"[Settings] Error writing settings to file: {e}")
+
     return current
+
 
