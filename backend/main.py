@@ -477,10 +477,20 @@ def zernio_webhook_health():
     api_key = zernio_client.get_zernio_api_key()
     return {
         "status": "online",
-        "service": "Zernio WhatsApp / SMS Webhook",
+        "service": "Zernio WhatsApp Webhook",
         "has_api_key": bool(api_key),
         "endpoint": "/api/zernio/webhook",
+        "channel_policy": "whatsapp_only",
+        "instagram_status": "strictly_blocked_and_ignored",
     }
+
+
+@app.post("/api/zernio/lock-whatsapp-only")
+@app.get("/api/zernio/lock-whatsapp-only")
+def lock_webhook_to_whatsapp():
+    """Updates Zernio webhook settings to restrict subscriptions solely to the WhatsApp account."""
+    res = zernio_client.lock_zernio_webhook_to_whatsapp()
+    return res
 
 
 @app.post("/api/zernio/webhook")
@@ -491,10 +501,8 @@ async def handle_zernio_webhook(
     x_zernio_signature: Optional[str] = Header(None),
 ):
     """
-    Receives incoming WhatsApp / SMS messages & media uploads from Zernio.
-    Signature check is optional: only enforced if ZERNIO_WEBHOOK_SECRET is set in Vercel.
-    - If media uploaded: Analyzes with Gemini Multimodal OCR -> stores in Supabase -> replies '👍'.
-    - If natural language query: Searches structured metadata via Gemini AI -> replies with document.
+    Receives incoming WhatsApp messages & media uploads from Zernio.
+    Strictly WhatsApp only — Instagram and all other non-WhatsApp channels are rejected.
     """
     raw_body = await request.body()
     secret = os.getenv("ZERNIO_WEBHOOK_SECRET", "").strip()
@@ -504,6 +512,18 @@ async def handle_zernio_webhook(
         clean_sig = x_zernio_signature.replace("sha256=", "").strip()
         if not hmac.compare_digest(expected_sig, clean_sig):
             return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid webhook signature"})
+
+    # Early rejection of Instagram events: no OCR analysis, no Supabase write, no revert
+    raw_str = raw_body.decode("utf-8", errors="ignore").lower()
+    if '"instagram"' in raw_str or "6a22c3002b2567671ae11645" in raw_str:
+        zernio_client._log_event(
+            "[Webhook Early Reject] Received Instagram message event. "
+            "Silently dropped: system is strictly restricted to WhatsApp. No analysis or revert performed."
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ignored", "reason": "instagram_channel_disabled", "channel": "whatsapp_only"}
+        )
 
     try:
         payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}

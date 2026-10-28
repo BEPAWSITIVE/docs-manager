@@ -906,6 +906,17 @@ export default function AdminPage() {
                 </div>
                 <span className="pill-status-tag pill-green">Online</span>
               </div>
+
+              <div className="custom-setting-box" style={{ marginTop: 14, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                <div className="setting-box-content">
+                  <h4 className="setting-heading" style={{ color: '#991b1b' }}>Channel Isolation & Security Policy</h4>
+                  <p className="setting-explainer" style={{ color: '#7f1d1d' }}>
+                    <strong>WhatsApp Gateway:</strong> Active and listening on WhatsApp (+1 864-947-4753).<br />
+                    <strong>Instagram Channel:</strong> Strictly disconnected & blocked. The backend will never analyze, store, or revert to any messages or media received from Instagram.
+                  </p>
+                </div>
+                <span className="pill-status-tag pill-red">Instagram Blocked</span>
+              </div>
             </div>
           )}
 

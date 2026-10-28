@@ -11,6 +11,11 @@ ZERNIO_API_BASE = "https://api.zernio.com/v1"
 _processed_events = set()
 _recent_webhook_logs: List[Dict[str, Any]] = []
 
+# Whitelisted and Blocked Accounts / Channels
+WHATSAPP_ACCOUNT_ID = "6adf16ad9c74a0a97edb9b33"
+BLOCKED_ACCOUNT_IDS = {"6a22c3002b2567671ae11645"}  # Instagram account (Robin Singh)
+BLOCKED_PLATFORMS = {"instagram", "facebook", "twitter", "x", "threads", "linkedin", "tiktok", "youtube"}
+
 
 def get_zernio_api_key() -> str:
     """Reads Zernio API key from config or environment."""
@@ -48,6 +53,12 @@ def send_conversation_reply(
     Works for WhatsApp, SMS, and other connected channels.
     Supports file-only delivery (omits text/message payload when text is empty/None).
     """
+    # Strict outbound safety guard: NEVER send messages to Instagram or blocked accounts
+    clean_account_id = str(account_id or "").strip()
+    if clean_account_id in BLOCKED_ACCOUNT_IDS:
+        _log_event(f"[SAFETY GUARD] Blocked attempt to send reply to Instagram account {clean_account_id}")
+        return False
+
     api_key = get_zernio_api_key()
     if not api_key:
         _log_event("Cannot send reply: ZERNIO_API_KEY is missing")
@@ -179,6 +190,11 @@ def send_reply(
     1. Tries Unified Inbox (supports WhatsApp & threaded SMS).
     2. If conversation reply fails or is missing, falls back to direct SMS.
     """
+    clean_account_id = str(account_id or "").strip()
+    if clean_account_id in BLOCKED_ACCOUNT_IDS:
+        _log_event(f"[SAFETY GUARD] Blocked attempt to send reply to Instagram account {clean_account_id}")
+        return False
+
     success = False
     if conversation_id and account_id:
         success = send_conversation_reply(
@@ -326,6 +342,33 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         or event_data.get("platform")
         or ("sms" if (sender_phone and not conversation_id) else "whatsapp")
     )
+
+    platform_clean = str(platform or "").lower().strip()
+    account_id_clean = str(account_id or "").strip()
+
+    # -------------------------------------------------------------------------
+    # STRICT CHANNEL FILTER: WHATSAPP ONLY
+    # Completely ignore any message/event from Instagram or non-WhatsApp channels.
+    # No OCR analysis, no database operations, and zero revert sent.
+    # -------------------------------------------------------------------------
+    is_instagram = (
+        platform_clean == "instagram"
+        or "instagram" in platform_clean
+        or account_id_clean in BLOCKED_ACCOUNT_IDS
+        or "instagram" in str(event_data).lower()[:400]
+    )
+
+    if is_instagram or (platform_clean and platform_clean not in ["whatsapp", "sms"]):
+        _log_event(
+            f"[CHANNEL BLOCKED] Strictly dropped non-WhatsApp message: platform='{platform}', "
+            f"account_id='{account_id}'. Bot operates strictly on WhatsApp. Zero analysis performed, zero revert sent."
+        )
+        return {
+            "status": "ignored",
+            "reason": "non_whatsapp_channel_blocked",
+            "platform": platform,
+            "account_id": account_id,
+        }
 
     # Extract attachments safely (supports 'attachments' and 'mediaUrls', 'url' and 'mediaUrl')
     raw_attachments = (
@@ -613,3 +656,39 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "not_found"}
 
     return {"status": "noop"}
+
+
+def lock_zernio_webhook_to_whatsapp() -> Dict[str, Any]:
+    """
+    Updates the Zernio webhook configuration so that it ONLY subscribes to the
+    WhatsApp account ('6adf16ad9c74a0a97edb9b33'), completely disconnecting the
+    Instagram account ('6a22c3002b2567671ae11645') from receiving webhook events.
+    """
+    api_key = get_zernio_api_key()
+    if not api_key:
+        return {"status": "error", "message": "ZERNIO_API_KEY missing"}
+
+    url = f"{ZERNIO_API_BASE}/webhooks/settings"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "webhookId": "6adf23989b5ed16cbc2cd352",
+        "accountIds": [WHATSAPP_ACCOUNT_ID],  # Strictly WhatsApp account only
+        "events": ["message.received"],
+        "isActive": True,
+    }
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.put(url, json=payload, headers=headers)
+            _log_event(f"Lock webhook to WhatsApp: status={resp.status_code}", resp.text[:200])
+            return {
+                "status": "success" if resp.status_code in [200, 201] else "error",
+                "code": resp.status_code,
+                "data": resp.json() if resp.status_code in [200, 201] else resp.text,
+            }
+    except Exception as ex:
+        _log_event(f"Error locking webhook to WhatsApp: {ex}")
+        return {"status": "error", "message": str(ex)}
