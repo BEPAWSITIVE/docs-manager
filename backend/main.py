@@ -270,13 +270,13 @@ async def upload_document(
 @app.post("/api/query")
 def query_documents(payload: QueryRequest, x_gemini_key: Optional[str] = Header(None)):
     """
-    Intelligently retrieves a document using Gemini AI matching against
-    structured metadata stored in Supabase Cloud DB.
-    Strictly AI retrieval — no offline/local keyword fallback.
+    Intelligently retrieves a document or handles queries using Gemini AI matching
+    against structured metadata stored in Supabase Cloud DB.
+    Strictly AI retrieval — zero hallucination, zero substitution, with professional conversation.
     """
     query = payload.query.strip()
     if not query:
-        return {"found": False, "message": "Document not found."}
+        return {"found": False, "message": "How may I assist you with your documents today?"}
 
     effective_key = (payload.api_key or x_gemini_key or config.get_api_key() or "").strip()
     if not effective_key:
@@ -287,25 +287,33 @@ def query_documents(payload: QueryRequest, x_gemini_key: Optional[str] = Header(
 
     # 1. Fetch candidate documents from Supabase PostgreSQL table
     docs = database.list_documents()
-    if not docs:
-        return {"found": False, "message": "No documents stored in Supabase yet."}
 
-    # 2. Strict AI matching
-    matched_doc = analyzer.find_matching_document(
+    # 2. Conversational retrieval with strict zero substitution
+    analysis_result = analyzer.conversational_document_retrieval(
         query=query,
         documents=docs,
         api_key=effective_key,
         model_name=payload.model or DEFAULT_MODEL,
     )
 
+    matched_doc = analysis_result.get("matched_doc")
+    reply_msg = analysis_result.get("professional_reply") or "Document not found."
+
     if not matched_doc:
-        return {"found": False, "message": "Document not found."}
+        return {
+            "found": False,
+            "message": reply_msg,
+            "intent": analysis_result.get("intent"),
+            "requested_person": analysis_result.get("requested_person"),
+            "requested_doc_type": analysis_result.get("requested_doc_type"),
+        }
 
     doc_id = matched_doc["doc_id"]
     return {
         "found": True,
         "doc_id": doc_id,
         "document": matched_doc,
+        "message": reply_msg,
         "file_url": f"/api/documents/{doc_id}/file",
         "download_url": f"/api/documents/{doc_id}/file?download=true",
         "storage_url": matched_doc.get("storage_url"),

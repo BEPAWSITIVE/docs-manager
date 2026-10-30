@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -289,6 +290,41 @@ def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
     except Exception as e:
         print(f"[Supabase] DB Upsert error: {e}")
         raise RuntimeError(f"Supabase DB insert error: {str(e)}")
+
+
+def try_claim_event(event_key: str) -> bool:
+    """
+    Atomically claims a webhook event in Supabase DB using a primary-key unique constraint.
+    Returns True if this is the first execution (claimed successfully).
+    Returns False if already claimed (duplicate delivery or retry).
+    """
+    if not event_key:
+        return True
+    client = get_client()
+    if not client:
+        return True
+
+    clean_key = re.sub(r"[^a-zA-Z0-9_-]", "_", str(event_key))[:70]
+    clean_id = f"__evt_{clean_key}__"
+    row = {
+        "doc_id": clean_id,
+        "original_filename": "__event_lock__",
+        "saved_filename": "__event_lock__",
+        "storage_path": "events/lock",
+        "storage_url": "",
+        "mime_type": "application/json",
+        "short_summary": "processing",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        client.table("documents_metadata").insert(row).execute()
+        return True
+    except Exception as e:
+        err_str = str(e)
+        if "23505" in err_str or "duplicate key" in err_str.lower():
+            return False
+        # If any other error (e.g. transient network), allow processing so messages are never lost
+        return True
 
 
 def get_all_metadata_from_supabase_db() -> List[Dict[str, Any]]:

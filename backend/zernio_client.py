@@ -206,8 +206,8 @@ def send_reply(
             attachment_name=attachment_name,
         )
 
-    # Fallback to direct SMS if conversation failed and phone numbers are present
-    if not success and sender_phone and recipient_phone:
+    # Fallback to direct SMS only if the channel is SMS and conversation failed
+    if not success and sender_phone and recipient_phone and not conversation_id:
         _log_event(f"Falling back to direct SMS send from {recipient_phone} to {sender_phone}")
         success = send_direct_sms_reply(
             from_phone=recipient_phone,
@@ -238,15 +238,6 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         _log_event("Zernio test event acknowledged")
         return {"status": "success", "message": "Test webhook verified"}
 
-    # Deduplicate repeated deliveries
-    if event_id:
-        if event_id in _processed_events:
-            _log_event(f"Skipping duplicate event_id: {event_id}")
-            return {"status": "skipped", "reason": "already_processed"}
-        _processed_events.add(event_id)
-        if len(_processed_events) > 1000:
-            _processed_events.clear()
-
     # Extract message object (nested in 'message' or at root)
     message_data = data.get("message") or event_data.get("message")
     if not isinstance(message_data, dict):
@@ -257,6 +248,35 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
     if direction in ["outbound", "out", "sent"]:
         _log_event(f"Ignoring outbound message echo (direction={direction})")
         return {"status": "ignored", "reason": "outbound_message"}
+
+    # Extract unique message and event identifiers for persistent deduplication
+    message_id = (
+        message_data.get("id")
+        or message_data.get("messageId")
+        or message_data.get("_id")
+        or data.get("messageId")
+        or event_id
+    )
+
+    # -------------------------------------------------------------------------
+    # PERSISTENT ATOMIC DEDUPLICATION:
+    # Zernio automatically retries webhooks if processing takes >5-10s.
+    # 1. In-memory check for quick deduplication inside the same container.
+    # 2. Database-level atomic constraint check across all serverless containers.
+    # This 100% prevents duplicate OCR runs and duplicate replies to WhatsApp!
+    # -------------------------------------------------------------------------
+    dedup_key = f"{event_type}_{message_id}" if message_id else (f"{event_type}_{event_id}" if event_id else None)
+    if dedup_key:
+        if dedup_key in _processed_events:
+            _log_event(f"[Dedup] Skipping duplicate event (in-memory): {dedup_key}")
+            return {"status": "skipped", "reason": "already_processed_in_memory", "key": dedup_key}
+        _processed_events.add(dedup_key)
+        if len(_processed_events) > 1000:
+            _processed_events.clear()
+
+        if not supabase_client.try_claim_event(dedup_key):
+            _log_event(f"[Dedup] Dropped duplicate delivery attempt (database lock): {dedup_key}")
+            return {"status": "skipped", "reason": "already_claimed_or_processed", "key": dedup_key}
 
     # Resolve conversationId
     conversation = data.get("conversation") or event_data.get("conversation") or {}
@@ -595,21 +615,16 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         docs = database.list_documents()
-        if not docs:
-            send_reply(
-                conversation_id=conversation_id,
-                account_id=account_id,
-                sender_phone=sender_phone,
-                recipient_phone=recipient_phone,
-                text="Document not found.",
-            )
-            return {"status": "no_docs_in_vault"}
 
-        matched_doc = analyzer.find_matching_document(
+        # Intelligent conversational document retrieval
+        analysis_result = analyzer.conversational_document_retrieval(
             query=text_content,
             documents=docs,
             api_key=config.get_api_key(),
         )
+
+        matched_doc = analysis_result.get("matched_doc")
+        professional_reply = analysis_result.get("professional_reply") or "I could not find the requested document."
 
         if matched_doc:
             doc_id = matched_doc.get("doc_id")
@@ -630,30 +645,33 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
             # This avoids Supabase private bucket 400 errors and Meta crawler rejection
             file_url = f"https://docs-manager-five.vercel.app/api/documents/{doc_id}/file/{saved_fname}"
 
-            _log_event(f"Sending ONLY document file for query '{text_content}': doc_id={doc_id}, mime={mime_type}, att_type={att_type}, url={file_url}")
+            _log_event(
+                f"Delivering document '{orig_name}' with professional reply: '{professional_reply}' "
+                f"(doc_id={doc_id}, url={file_url})"
+            )
 
-            # Send strictly ONLY the file — no conversation, paragraph, or text explanation
+            # Deliver both the document file AND the courteous professional delivery message
             send_reply(
                 conversation_id=conversation_id,
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text=None,
+                text=professional_reply,
                 media_url=file_url,
                 attachment_type=att_type,
                 attachment_name=orig_name,
             )
-            return {"status": "matched", "doc_id": doc_id}
+            return {"status": "matched", "doc_id": doc_id, "reply": professional_reply}
         else:
-            _log_event(f"No match for query: '{text_content}'")
+            _log_event(f"Conversational reply for query '{text_content}': {professional_reply}")
             send_reply(
                 conversation_id=conversation_id,
                 account_id=account_id,
                 sender_phone=sender_phone,
                 recipient_phone=recipient_phone,
-                text="Document not found.",
+                text=professional_reply,
             )
-            return {"status": "not_found"}
+            return {"status": "replied", "intent": analysis_result.get("intent"), "reply": professional_reply}
 
     return {"status": "noop"}
 

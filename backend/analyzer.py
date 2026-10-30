@@ -196,29 +196,43 @@ def analyze_document(
     return default_fallback
 
 
-def find_matching_document(
+def conversational_document_retrieval(
     query: str,
     documents: List[Dict[str, Any]],
     api_key: Optional[str] = None,
     model_name: str = DEFAULT_MODEL,
-) -> Optional[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    Uses Gemini AI to intelligently match a natural language query
-    (e.g. 'Give me Shivam\'s Aadhar card' or 'Shivam ka aadhar dena')
-    strictly against structured document metadata stored in Supabase.
-    Ultra-fast execution: uses gemini-3.5-flash-lite without retry backoff to avoid Vercel timeouts.
+    Intelligently analyzes a natural language query or conversation from WhatsApp/Web.
+    - Understands user intent (document request, greeting, questions, list inquiry).
+    - Enforces STRICT matching: BOTH person name and document type must match.
+    - ZERO-HALLUCINATION / ZERO-SUBSTITUTION: If a user asks for 'Rahul land certificate'
+      and we only have 'Rahul birth certificate', it will NEVER return the birth certificate!
+      Instead, it replies conversationally and professionally, informing the user what is on file.
+    - Generates a courteous, professional conversational reply for every situation.
     """
-    if not documents:
-        return None
+    default_res = {
+        "intent": "document_request",
+        "matched_doc_id": None,
+        "matched_doc": None,
+        "requested_person": None,
+        "requested_doc_type": None,
+        "professional_reply": "I searched our records, but could not find the requested document.",
+    }
+
+    clean_query = str(query or "").strip()
+    if not clean_query:
+        default_res["professional_reply"] = "How may I assist you with your documents today?"
+        return default_res
 
     effective_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
     if not effective_key:
-        print("[analyzer.find_matching_document] Missing GEMINI_API_KEY")
-        return None
+        print("[analyzer.conversational_document_retrieval] Missing GEMINI_API_KEY")
+        return default_res
 
     # Prepare candidate metadata list from Supabase
     candidates = []
-    for doc in documents:
+    for doc in (documents or []):
         analysis = doc.get("analysis", {})
         candidates.append({
             "doc_id": doc.get("doc_id"),
@@ -231,24 +245,54 @@ def find_matching_document(
             "original_filename": doc.get("original_filename"),
         })
 
-    prompt = (
-        f"User request: \"{query}\"\n\n"
-        f"Candidate documents in Cloud Database:\n"
-        f"{json.dumps(candidates, indent=2)}\n\n"
-        "Task: You are an intelligent document retrieval agent. Determine which single document ID best matches the user's request.\n\n"
-        "Strict Matching Rules:\n"
-        "1. Person Name Matching: Pay critical attention to the person's name requested (e.g. 'Shivam', 'Deepak', 'Kabeer'). "
-        "If the user asks for 'Shivam\'s Aadhar card', find the document belonging to 'Shivam'. "
-        "NEVER return a document belonging to a different person (e.g. never return Kabeer's or Deepak's document for Shivam).\n"
-        "2. Document Type Matching: Match the requested document type (e.g. Aadhaar Card, PAN Card, Driving License, Passport, Marksheet, Resume, Quotation, Invoice, Offer Poster, Banner).\n"
-        "3. Multi-Card / Multi-Document files: If a file contains multiple cards or documents (for instance 'Aadhaar Card and PAN Card' or 'adhar and pan.pdf'), "
-        "it IS a match if the user asks for EITHER of those documents for that person.\n"
-        "4. Marketing & Banners: For queries like 'precision optics banner' or 'offer poster', match the candidate with the corresponding company/brand name and document type.\n"
-        "5. Multilingual & Hinglish: Understand queries in English, Hindi, or Hinglish (e.g. 'Shivam ka aadhar dena', 'deepak ka pan card bhejo', 'mujhe quotation chahiye').\n"
-        "6. No Hallucination / Null Result: If NO document in the candidate list matches the user's request with clear confidence, return null for matched_doc_id.\n\n"
-        "Return STRICTLY a JSON object with this exact format:\n"
-        '{"matched_doc_id": "<doc_id>" or null, "reason": "<brief justification>"}'
-    )
+    prompt = f"""You are the official, professional AI Document Assistant for 'Docs Manager' communicating directly with a verified client on WhatsApp.
+
+User's incoming message: "{clean_query}"
+
+Available stored documents in the cloud vault:
+{json.dumps(candidates, indent=2, ensure_ascii=False)}
+
+Your Objectives:
+1. Understand the user's intent:
+   - "document_request": The user is asking to retrieve/find a document (e.g., "Give me Rahul's land certificate", "Shivam ka aadhar dena", "electricity bill bhejo").
+   - "list_inquiry": The user is asking what documents exist for a person or in the vault (e.g., "What documents do you have for Rahul?", "Rahul ke kaunse docs hain?").
+   - "general_chat": Greetings, general assistance, or questions about how to use the service (e.g., "Hi", "Hello", "How do I use this?", "Who are you?").
+   - "clarification_needed": The user asked for a vague document where multiple different people or candidates exist, and you need to clarify who they mean.
+
+2. STRICT DOCUMENT MATCHING & ANTI-HALLUCINATION RULES:
+   - BOTH the Person's Name AND the Document Type MUST match with high confidence.
+   - ZERO SUBSTITUTION RULE:
+     * If the user asks for a "Land Certificate" (or Jamabandi, Land Map, Khasra, Registry, Khatauni) for Rahul, but the vault only has a "Birth Certificate" or "Electricity Bill" for Rahul:
+       matched_doc_id MUST BE null!
+     * NEVER return a Birth Certificate, Aadhaar Card, or Bill when a Land Certificate was requested.
+     * NEVER return a document belonging to a different person (e.g., never return Shivam's or Pratap's document for Rahul).
+   - If a file contains multiple cards/documents (e.g., "Aadhaar Card and PAN Card"), it is a valid match if the user asks for either card for that person.
+   - If matched, set "matched_doc_id" to the document's doc_id. If not matched, "matched_doc_id" MUST be null.
+
+3. PROFESSIONAL CONVERSATIONAL RESPONSE ("professional_reply"):
+   - Formulate a polite, professional, and helpful response suitable for business WhatsApp communication.
+   - Maintain the user's language (English, Hindi, or Hinglish).
+   - If a document is MATCHED:
+     Provide a courteous, brief delivery message indicating the exact document being provided (e.g., "Here is the Birth Certificate for Rahul that you requested." / "नमस्ते, राहुल का जन्म प्रमाण पत्र यहाँ संलग्न है।").
+   - If a document is NOT FOUND, but OTHER documents exist for that person:
+     Politely explain that the requested document type was not found, mention what document(s) ARE currently available for that person, and ask how they would like to proceed.
+     (e.g., "I searched our records for a Land Certificate for Rahul, but could not find one on file. However, we currently have Rahul's Birth Certificate in the vault. Would you like me to share that instead?")
+   - If NO records exist at all for that person/query:
+     Politely inform the user that no matching records were found, and offer assistance (e.g., "I checked our records, but could not find any documents for [Name]. Please verify the name or feel free to upload the document here if you'd like it indexed.").
+   - If GREETING or GENERAL INQUIRY:
+     Welcome the user professionally, explain what Docs Manager can do (securely store documents, extract details, and retrieve them anytime), and offer to assist.
+   - If LISTING DOCUMENTS:
+     List the available documents for the person neatly in bullet points and ask if they'd like any sent.
+
+Return STRICTLY a JSON object with this exact schema:
+{{
+  "intent": "document_request" | "list_inquiry" | "general_chat" | "clarification_needed",
+  "matched_doc_id": string or null,
+  "requested_person": string or null,
+  "requested_doc_type": string or null,
+  "professional_reply": string
+}}
+"""
 
     models_to_try = _get_model_candidates(model_name)
     client = get_genai_client(effective_key)
@@ -260,7 +304,7 @@ def find_matching_document(
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    temperature=0.0,
+                    temperature=0.1,
                 ),
             )
 
@@ -268,14 +312,42 @@ def find_matching_document(
                 cleaned = _clean_json_response(response.text)
                 result = json.loads(cleaned)
                 matched_id = result.get("matched_doc_id")
+                matched_doc = None
                 if matched_id:
                     for doc in documents:
                         if doc.get("doc_id") == matched_id:
-                            return doc
-                # AI explicitly answered that no document matched
-                return None
+                            matched_doc = doc
+                            break
+
+                return {
+                    "intent": result.get("intent", "document_request"),
+                    "matched_doc_id": matched_id if matched_doc else None,
+                    "matched_doc": matched_doc,
+                    "requested_person": result.get("requested_person"),
+                    "requested_doc_type": result.get("requested_doc_type"),
+                    "professional_reply": result.get("professional_reply") or "I could not find the requested document.",
+                }
         except Exception as model_err:
-            print(f"[analyzer.find_matching_document] Model '{current_model}' failed: {model_err}. Trying fallback...")
+            print(f"[analyzer.conversational_document_retrieval] Model '{current_model}' failed: {model_err}. Trying fallback...")
             continue
 
-    return None
+    return default_res
+
+
+def find_matching_document(
+    query: str,
+    documents: List[Dict[str, Any]],
+    api_key: Optional[str] = None,
+    model_name: str = DEFAULT_MODEL,
+) -> Optional[Dict[str, Any]]:
+    """
+    Backwards-compatible wrapper that returns the matched document dictionary or None.
+    Uses conversational_document_retrieval internally.
+    """
+    res = conversational_document_retrieval(
+        query=query,
+        documents=documents,
+        api_key=api_key,
+        model_name=model_name,
+    )
+    return res.get("matched_doc")

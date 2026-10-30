@@ -407,11 +407,18 @@ WITH CHECK (true);`;
       if (res.ok) {
         const data = await res.json();
         if (data.found && data.document) {
-          // Deliver matched document directly without chatter
+          // Deliver matched document with professional conversational companion message
           setMessages((prev) => [
             ...prev,
-            {
+            ...(data.message ? [{
               id: Date.now() + 1,
+              role: 'assistant',
+              type: 'text',
+              content: data.message,
+              time: getFormatTime(),
+            }] : []),
+            {
+              id: Date.now() + 2,
               role: 'assistant',
               type: 'document',
               doc: data.document,
