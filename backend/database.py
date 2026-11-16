@@ -4,11 +4,25 @@ Connects directly to Supabase Cloud PostgreSQL for structured metadata
 and Supabase Storage Bucket for binary document files.
 No local disk storage or offline fallbacks.
 """
+import time
 from datetime import datetime, timezone
 import re
 import uuid
 from typing import Any, Dict, List, Optional
 from backend import supabase_client
+
+
+# In-memory document metadata cache for ultra-fast webhook responses
+_documents_cache: Optional[List[Dict[str, Any]]] = None
+_documents_cache_time: float = 0.0
+DOCUMENTS_CACHE_TTL = 60.0  # seconds
+
+
+def invalidate_documents_cache() -> None:
+    """Invalidates the in-memory documents cache so fresh data is fetched."""
+    global _documents_cache, _documents_cache_time
+    _documents_cache = None
+    _documents_cache_time = 0.0
 
 
 def save_document(
@@ -46,6 +60,7 @@ def save_document(
 
     # Save directly to Supabase Cloud DB
     supabase_client.save_metadata_to_supabase_db(record)
+    invalidate_documents_cache()
     return record
 
 
@@ -54,9 +69,18 @@ def get_document(doc_id: str) -> Optional[Dict[str, Any]]:
     return supabase_client.get_metadata_by_id_from_supabase_db(doc_id)
 
 
-def list_documents() -> List[Dict[str, Any]]:
-    """Lists all stored documents directly from Supabase Cloud DB."""
-    return supabase_client.get_all_metadata_from_supabase_db()
+def list_documents(force_refresh: bool = False) -> List[Dict[str, Any]]:
+    """Lists all stored documents directly from Supabase Cloud DB with TTL caching."""
+    global _documents_cache, _documents_cache_time
+    now = time.time()
+    if not force_refresh and _documents_cache is not None and (now - _documents_cache_time) < DOCUMENTS_CACHE_TTL:
+        return _documents_cache
+
+    docs = supabase_client.get_all_metadata_from_supabase_db()
+    if docs is not None:
+        _documents_cache = docs
+        _documents_cache_time = now
+    return _documents_cache or docs or []
 
 
 def delete_document(doc_id: str) -> bool:
@@ -69,7 +93,9 @@ def delete_document(doc_id: str) -> bool:
     if storage_path:
         supabase_client.delete_from_supabase_bucket(storage_path)
 
-    return supabase_client.delete_metadata_from_supabase_db(doc_id)
+    res = supabase_client.delete_metadata_from_supabase_db(doc_id)
+    invalidate_documents_cache()
+    return res
 
 
 # =============================================================================

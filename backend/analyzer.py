@@ -225,32 +225,52 @@ def conversational_document_retrieval(
         default_res["professional_reply"] = "How may I assist you with your documents today?"
         return default_res
 
+    # Instant sub-millisecond response for standard greetings and common polite messages
+    clean_lower = clean_query.lower().strip("!.?, ")
+    if clean_lower in [
+        "hi", "hii", "hiii", "hello", "hey", "heyy", "namaste", "namaskar", "pranam",
+        "kaise ho", "kya haal hai", "good morning", "good afternoon", "good evening", "help",
+        "start", "menu"
+    ]:
+        default_res["intent"] = "general_chat"
+        default_res["professional_reply"] = (
+            "Hello! Welcome to Docs Manager, your official AI Document Assistant on WhatsApp. "
+            "I can help you securely search, access, and retrieve your stored documents anytime. "
+            "How may I assist you today?"
+        )
+        return default_res
+
     effective_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
     if not effective_key:
         print("[analyzer.conversational_document_retrieval] Missing GEMINI_API_KEY")
         return default_res
 
-    # Prepare candidate metadata list from Supabase
-    candidates = []
+    # Prepare concise candidate metadata list for ultra-fast LLM inference
+    compact_candidates = []
     for doc in (documents or []):
         analysis = doc.get("analysis", {})
-        candidates.append({
-            "doc_id": doc.get("doc_id"),
-            "document_type": analysis.get("document_type"),
-            "person_name": analysis.get("person_name"),
-            "document_number": analysis.get("document_number"),
-            "issuing_authority": analysis.get("issuing_authority"),
-            "searchable_keywords": analysis.get("searchable_keywords", []),
-            "short_summary": analysis.get("short_summary"),
-            "original_filename": doc.get("original_filename"),
-        })
+        doc_type = analysis.get("document_type") or doc.get("document_type") or "Document"
+        name = analysis.get("person_name") or doc.get("person_name") or ""
+        doc_no = analysis.get("document_number") or doc.get("document_number") or ""
+        auth = analysis.get("issuing_authority") or doc.get("issuing_authority") or ""
+
+        info = f"- ID: {doc.get('doc_id')} | Type: {doc_type}"
+        if name:
+            info += f" | Person: {name}"
+        if doc_no:
+            info += f" | No: {doc_no}"
+        if auth:
+            info += f" | Authority: {auth}"
+        compact_candidates.append(info)
+
+    candidates_summary = "\n".join(compact_candidates)
 
     prompt = f"""You are the official, professional AI Document Assistant for 'Docs Manager' communicating directly with a verified client on WhatsApp.
 
 User's incoming message: "{clean_query}"
 
 Available stored documents in the cloud vault:
-{json.dumps(candidates, indent=2, ensure_ascii=False)}
+{candidates_summary}
 
 Your Objectives:
 1. Understand the user's intent:

@@ -254,7 +254,9 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
         message_data.get("id")
         or message_data.get("messageId")
         or message_data.get("_id")
+        or message_data.get("platformMessageId")
         or data.get("messageId")
+        or data.get("id")
         or event_id
     )
 
@@ -613,6 +615,24 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 "sender": sender_phone,
                 "reason": "non_owner_fetch_silently_ignored",
             }
+
+        # Fast path: instant reply for greetings and general prompts without touching database
+        quick_check = analyzer.conversational_document_retrieval(
+            query=text_content,
+            documents=[],
+            api_key=config.get_api_key(),
+        )
+        if quick_check.get("intent") == "general_chat" and not quick_check.get("matched_doc"):
+            professional_reply = quick_check.get("professional_reply")
+            _log_event(f"Fast greeting reply for '{text_content}': {professional_reply}")
+            send_reply(
+                conversation_id=conversation_id,
+                account_id=account_id,
+                sender_phone=sender_phone,
+                recipient_phone=recipient_phone,
+                text=professional_reply,
+            )
+            return {"status": "replied", "intent": "general_chat", "reply": professional_reply}
 
         docs = database.list_documents()
 

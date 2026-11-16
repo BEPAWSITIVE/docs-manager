@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import hashlib
 import json
@@ -538,9 +539,9 @@ async def handle_zernio_webhook(
     except Exception as e:
         return JSONResponse(status_code=400, content={"status": "error", "message": f"Invalid JSON: {e}"})
 
-    # Process the message/document directly
+    # Process the message/document in a worker thread so the event loop is never blocked
     try:
-        result = zernio_client.process_incoming_zernio_event(payload)
+        result = await asyncio.to_thread(zernio_client.process_incoming_zernio_event, payload)
         return {"status": "success", "result": result}
     except Exception as exc:
         import traceback
