@@ -545,24 +545,39 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 processed_count += 1
                 doc_type = (analysis.get("document_type") or "").strip()
                 person = (analysis.get("person_name") or "").strip()
+                father = (analysis.get("father_or_spouse_name") or "").strip()
                 doc_num = (analysis.get("document_number") or "").strip()
+                add_ids = (analysis.get("additional_identifiers") or "").strip()
                 phone_num = (analysis.get("phone_number") or "").strip()
                 dob = (analysis.get("dob") or "").strip()
+                dates = (analysis.get("key_dates") or "").strip()
+                location = (analysis.get("address_or_location") or "").strip()
                 authority = (analysis.get("issuing_authority") or "").strip()
+                amount = (analysis.get("financial_amount") or "").strip()
 
                 pts = []
                 if doc_type and doc_type.lower() != "document":
                     pts.append(f"• Document: {doc_type}")
                 if person:
                     pts.append(f"• Name: {person}")
+                if father:
+                    pts.append(f"• Father/Spouse: {father}")
                 if doc_num:
                     pts.append(f"• ID No: {doc_num}")
+                if add_ids:
+                    pts.append(f"• Identifiers: {add_ids}")
+                if location:
+                    pts.append(f"• Location: {location}")
                 if phone_num:
                     pts.append(f"• Phone: {phone_num}")
                 if dob:
                     pts.append(f"• DOB: {dob}")
+                if dates and dates != dob:
+                    pts.append(f"• Dates: {dates}")
                 if authority:
                     pts.append(f"• Authority: {authority}")
+                if amount:
+                    pts.append(f"• Amount: {amount}")
 
                 if pts:
                     uploaded_summaries.append(pts)
@@ -616,24 +631,7 @@ def process_incoming_zernio_event(event_data: Dict[str, Any]) -> Dict[str, Any]:
                 "reason": "non_owner_fetch_silently_ignored",
             }
 
-        # Fast path: instant reply for greetings and general prompts without touching database
-        quick_check = analyzer.conversational_document_retrieval(
-            query=text_content,
-            documents=[],
-            api_key=config.get_api_key(),
-        )
-        if quick_check.get("intent") == "general_chat" and not quick_check.get("matched_doc"):
-            professional_reply = quick_check.get("professional_reply")
-            _log_event(f"Fast greeting reply for '{text_content}': {professional_reply}")
-            send_reply(
-                conversation_id=conversation_id,
-                account_id=account_id,
-                sender_phone=sender_phone,
-                recipient_phone=recipient_phone,
-                text=professional_reply,
-            )
-            return {"status": "replied", "intent": "general_chat", "reply": professional_reply}
-
+        # Retrieve documents from database (cached in memory with TTL for ultra-low latency)
         docs = database.list_documents()
 
         # Intelligent conversational document retrieval

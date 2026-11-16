@@ -259,6 +259,38 @@ def delete_from_supabase_bucket(storage_path: str) -> bool:
         return False
 
 
+def _unpack_analysis_from_row(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Reconstructs full structured analysis including enriched metadata tags."""
+    summary = str(r.get("short_summary") or "")
+
+    def _extract_tag(tag: str) -> str:
+        match = re.search(rf"\[{tag}:\s*([^\]]+)\]", summary)
+        return match.group(1).strip() if match else ""
+
+    father = r.get("father_or_spouse_name") or _extract_tag("Father/Spouse")
+    add_ids = r.get("additional_identifiers") or _extract_tag("ID")
+    location = r.get("address_or_location") or _extract_tag("Location")
+    dates = r.get("key_dates") or _extract_tag("Dates")
+    amount = r.get("financial_amount") or _extract_tag("Amount")
+    phone = r.get("phone_number") or _extract_tag("Phone")
+
+    return {
+        "document_type": r.get("document_type", "Document"),
+        "person_name": r.get("person_name", ""),
+        "father_or_spouse_name": father,
+        "document_number": r.get("document_number", ""),
+        "additional_identifiers": add_ids,
+        "phone_number": phone,
+        "issuing_authority": r.get("issuing_authority", ""),
+        "dob": r.get("dob", ""),
+        "key_dates": dates,
+        "address_or_location": location,
+        "financial_amount": amount,
+        "searchable_keywords": r.get("searchable_keywords") or [],
+        "short_summary": summary,
+    }
+
+
 def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
     """Saves structured metadata record to Supabase documents_metadata table."""
     client = get_client()
@@ -266,6 +298,36 @@ def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
         raise RuntimeError("Supabase client is not connected. Check SUPABASE_URL and SUPABASE_KEY.")
 
     analysis = record.get("analysis", {})
+    summary = str(analysis.get("short_summary", "") or "")
+
+    # Embed new metadata fields systematically in short_summary if not already present
+    tags = []
+    if analysis.get("father_or_spouse_name") and "[Father/Spouse:" not in summary:
+        tags.append(f"[Father/Spouse: {analysis.get('father_or_spouse_name')}]")
+    if analysis.get("additional_identifiers") and "[ID:" not in summary:
+        tags.append(f"[ID: {analysis.get('additional_identifiers')}]")
+    if analysis.get("phone_number") and "[Phone:" not in summary:
+        tags.append(f"[Phone: {analysis.get('phone_number')}]")
+    if analysis.get("key_dates") and "[Dates:" not in summary:
+        tags.append(f"[Dates: {analysis.get('key_dates')}]")
+    if analysis.get("address_or_location") and "[Location:" not in summary:
+        tags.append(f"[Location: {analysis.get('address_or_location')}]")
+    if analysis.get("financial_amount") and "[Amount:" not in summary:
+        tags.append(f"[Amount: {analysis.get('financial_amount')}]")
+
+    if tags:
+        summary = (summary + " " + " ".join(tags)).strip()
+
+    # Enrich searchable_keywords array with tokens from all fields
+    keywords = list(analysis.get("searchable_keywords") or [])
+    for field in ["father_or_spouse_name", "additional_identifiers", "address_or_location", "key_dates", "financial_amount", "phone_number"]:
+        val = analysis.get(field)
+        if val and isinstance(val, str):
+            for part in re.split(r"[,;/\s]+", val):
+                p = part.strip().lower()
+                if len(p) > 2 and p not in [k.lower() for k in keywords]:
+                    keywords.append(p)
+
     row = {
         "doc_id": record.get("doc_id"),
         "original_filename": record.get("original_filename"),
@@ -279,8 +341,8 @@ def save_metadata_to_supabase_db(record: Dict[str, Any]) -> bool:
         "document_number": analysis.get("document_number", ""),
         "issuing_authority": analysis.get("issuing_authority", ""),
         "dob": analysis.get("dob", ""),
-        "searchable_keywords": analysis.get("searchable_keywords", []),
-        "short_summary": analysis.get("short_summary", ""),
+        "searchable_keywords": keywords,
+        "short_summary": summary,
         "created_at": record.get("created_at") or datetime.now(timezone.utc).isoformat(),
     }
 
@@ -352,15 +414,7 @@ def get_all_metadata_from_supabase_db() -> List[Dict[str, Any]]:
                 "mime_type": r.get("mime_type") or "application/octet-stream",
                 "file_size_bytes": r.get("file_size_bytes", 0),
                 "created_at": r.get("created_at"),
-                "analysis": {
-                    "document_type": r.get("document_type", "Document"),
-                    "person_name": r.get("person_name", ""),
-                    "document_number": r.get("document_number", ""),
-                    "issuing_authority": r.get("issuing_authority", ""),
-                    "dob": r.get("dob", ""),
-                    "searchable_keywords": r.get("searchable_keywords") or [],
-                    "short_summary": r.get("short_summary", ""),
-                },
+                "analysis": _unpack_analysis_from_row(r),
             }
             docs.append(doc_record)
         return docs
@@ -391,15 +445,7 @@ def get_metadata_by_id_from_supabase_db(doc_id: str) -> Optional[Dict[str, Any]]
             "mime_type": r.get("mime_type") or "application/octet-stream",
             "file_size_bytes": r.get("file_size_bytes", 0),
             "created_at": r.get("created_at"),
-            "analysis": {
-                "document_type": r.get("document_type", "Document"),
-                "person_name": r.get("person_name", ""),
-                "document_number": r.get("document_number", ""),
-                "issuing_authority": r.get("issuing_authority", ""),
-                "dob": r.get("dob", ""),
-                "searchable_keywords": r.get("searchable_keywords") or [],
-                "short_summary": r.get("short_summary", ""),
-            },
+            "analysis": _unpack_analysis_from_row(r),
         }
     except Exception as e:
         print(f"[Supabase] DB Fetch by ID error: {e}")

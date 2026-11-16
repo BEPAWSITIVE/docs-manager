@@ -91,10 +91,15 @@ def analyze_document(
     default_fallback = {
         "document_type": stem_name.replace("_", " ").title(),
         "person_name": "",
+        "father_or_spouse_name": "",
         "document_number": "",
+        "additional_identifiers": "",
         "phone_number": "",
         "issuing_authority": "",
         "dob": "",
+        "key_dates": "",
+        "address_or_location": "",
+        "financial_amount": "",
         "searchable_keywords": [stem_name.lower()],
         "short_summary": f"Uploaded document: {filename}",
     }
@@ -123,27 +128,45 @@ def analyze_document(
         )
 
         base_instructions = (
-            "You are an expert document classifier and OCR metadata extractor.\n"
-            "Examine this document, image, or file thoroughly.\n\n"
-            "Key instructions:\n"
-            "1. Multi-document detection: If this file contains multiple documents or cards (for example: "
-            "both an Aadhaar Card AND a PAN Card in the same PDF/image), explicitly classify document_type as "
-            "'Aadhaar Card and PAN Card' (or similar combo), and ensure searchable_keywords includes BOTH card types.\n"
-            "2. Promotional Posters / Banners / Ads: If this is a promotional banner, offer poster, advertisement, "
-            "or flyer (e.g. 'Precision Optics Offer Banner', discounts, eyewear, retail poster), classify document_type "
-            "appropriately (e.g. 'Promotional Banner' or 'Offer Poster'), extract the store/business name into "
-            "issuing_authority, and include all prominent keywords (e.g. 'precision optics', 'banner', 'poster', 'offer', discounts).\n"
-            "3. Personal ID & Invoices: Accurately extract person_name, ID numbers, phone number, issue date / DOB, and organization.\n"
-            "4. Searchable Keywords: Array of all relevant search keywords including document type variations, "
-            "transliterations ('aadhar', 'adhar', 'aadhaar', 'pan'), person names, company names, key offerings, and filename terms.\n\n"
+            "You are an expert multilingual document classifier, OCR engine, and metadata extractor.\n"
+            "Examine this document, image, or PDF thoroughly. Capture ALL important data into structured metadata "
+            "so that any user searching by person name, relative name, document number, location, date, or document type "
+            "can find it effortlessly in the future.\n\n"
+            "Key Extraction Instructions:\n"
+            "1. Document Type: Classify precisely (e.g. 'Aadhaar Card', 'PAN Card', 'Jamabandi / Land Record', "
+            "'Land Survey Map', 'Electricity Bill', 'Driving License', 'Passport', 'Birth Certificate', "
+            "'Agriculturist Certificate', 'Bank Statement', 'Marksheet', 'Rent Agreement', 'Invoice', 'Promotional Banner'). "
+            "If multi-document (e.g. Aadhaar + PAN in one file), explicitly state 'Aadhaar Card and PAN Card'.\n"
+            "2. Primary Person Name: Full legal name of the cardholder, consumer, or owner. Include both English and Hindi spellings if visible.\n"
+            "3. Father / Spouse / Relative Name: Extract Father's Name, Husband's Name, S/O, D/O, W/O, C/O if printed.\n"
+            "4. Document Number / Primary ID: The primary official identifier (e.g. 12-digit Aadhaar, 10-char PAN, License No, Passport No, Bill CA No).\n"
+            "5. Additional Identifiers: Secondary numbers like Khasra No, Khata No, Khewat No, Jamabandi No, Consumer No, Meter No, Roll No, Account No.\n"
+            "6. Key Dates: Date of Birth (DOB), issue date, validity/expiry date, billing period, due date, registration date.\n"
+            "7. Address & Location: Village, Mauza, Tehsil, District, City, State, PIN code, or landmark mentioned.\n"
+            "8. Issuing Authority: Official issuing department, ministry, or company (e.g. UIDAI, Income Tax Department, Revenue Department, BSES, State Government, Bank).\n"
+            "9. Phone Number: Any contact phone or mobile number printed on the document.\n"
+            "10. Financial / Numeric Specifics: Bill payable amount, land area/kitta measurement, fee, or property value if applicable.\n"
+            "11. Searchable Keywords: Comprehensive array of 15-30 search keywords including:\n"
+            "    - Person name variations (first, last, full, both English and Hindi spellings)\n"
+            "    - Father/Spouse name\n"
+            "    - Document type in English, Hindi, and Hinglish (e.g. 'aadhar', 'adhar', 'aadhaar', 'pan card', 'jamabandi', 'nakal', 'bijli bill', 'electricity bill', 'khasra', 'khatauni')\n"
+            "    - All ID numbers and partial numbers\n"
+            "    - Village, Tehsil, District, State names\n"
+            "    - Issuing authority name\n"
+            "12. Short Summary: A dense, 2-3 sentence factual summary capturing all critical facts: document type, primary person, relative, ID number, location, and key dates.\n\n"
             "Return STRICTLY a JSON object with this exact structure:\n"
             "{\n"
             '  "document_type": string,\n'
             '  "person_name": string,\n'
+            '  "father_or_spouse_name": string,\n'
             '  "document_number": string,\n'
+            '  "additional_identifiers": string,\n'
             '  "phone_number": string,\n'
             '  "issuing_authority": string,\n'
             '  "dob": string,\n'
+            '  "key_dates": string,\n'
+            '  "address_or_location": string,\n'
+            '  "financial_amount": string,\n'
             '  "searchable_keywords": string[],\n'
             '  "short_summary": string\n'
             "}"
@@ -233,11 +256,15 @@ def conversational_document_retrieval(
         "start", "menu"
     ]:
         default_res["intent"] = "general_chat"
-        default_res["professional_reply"] = (
-            "Hello! Welcome to Docs Manager, your official AI Document Assistant on WhatsApp. "
-            "I can help you securely search, access, and retrieve your stored documents anytime. "
-            "How may I assist you today?"
-        )
+        is_hinglish_greeting = any(w in clean_lower for w in ["namaste", "namaskar", "pranam", "kaise", "haal", "kya"])
+        if is_hinglish_greeting:
+            default_res["professional_reply"] = (
+                "Docs Assistant ready hai. Batayein kaunsa document chahiye (jaise Deepak ka PAN card ya Rahul ka electricity bill)."
+            )
+        else:
+            default_res["professional_reply"] = (
+                "Docs Assistant ready. Please specify which document you need (e.g. Deepak PAN card or Rahul electricity bill)."
+            )
         return default_res
 
     effective_key = (api_key or os.getenv("GEMINI_API_KEY", "")).strip()
@@ -251,58 +278,78 @@ def conversational_document_retrieval(
         analysis = doc.get("analysis", {})
         doc_type = analysis.get("document_type") or doc.get("document_type") or "Document"
         name = analysis.get("person_name") or doc.get("person_name") or ""
+        father = analysis.get("father_or_spouse_name") or ""
         doc_no = analysis.get("document_number") or doc.get("document_number") or ""
+        add_ids = analysis.get("additional_identifiers") or ""
         auth = analysis.get("issuing_authority") or doc.get("issuing_authority") or ""
+        location = analysis.get("address_or_location") or ""
+        summary = analysis.get("short_summary") or doc.get("short_summary") or ""
 
         info = f"- ID: {doc.get('doc_id')} | Type: {doc_type}"
         if name:
             info += f" | Person: {name}"
+        if father:
+            info += f" | Rel: {father}"
         if doc_no:
             info += f" | No: {doc_no}"
+        if add_ids:
+            info += f" | ExtraID: {add_ids}"
         if auth:
-            info += f" | Authority: {auth}"
+            info += f" | Auth: {auth}"
+        if location:
+            info += f" | Loc: {location}"
+        if summary:
+            info += f" | Details: {summary[:100]}"
         compact_candidates.append(info)
 
     candidates_summary = "\n".join(compact_candidates)
 
-    prompt = f"""You are the official, professional AI Document Assistant for 'Docs Manager' communicating directly with a verified client on WhatsApp.
+    prompt = f"""You are the official, helpful AI Document Assistant for 'Docs Manager' communicating directly with a verified user on WhatsApp.
 
 User's incoming message: "{clean_query}"
 
 Available stored documents in the cloud vault:
 {candidates_summary}
 
-Your Objectives:
+Your Objectives & Strict Rules:
 1. Understand the user's intent:
-   - "document_request": The user is asking to retrieve/find a document (e.g., "Give me Rahul's land certificate", "Shivam ka aadhar dena", "electricity bill bhejo").
-   - "list_inquiry": The user is asking what documents exist for a person or in the vault (e.g., "What documents do you have for Rahul?", "Rahul ke kaunse docs hain?").
-   - "general_chat": Greetings, general assistance, or questions about how to use the service (e.g., "Hi", "Hello", "How do I use this?", "Who are you?").
-   - "clarification_needed": The user asked for a vague document where multiple different people or candidates exist, and you need to clarify who they mean.
+   - "document_request": User is asking to retrieve/find a document (e.g., "Give me Rahul's land certificate", "Shivam ka aadhar dena", "electricity bill bhejo", "sayd pancard tha").
+   - "list_inquiry": User is asking what documents exist for a person or in the vault (e.g., "What documents do you have for Rahul?", "Rahul ke kaunse docs hain?", "kya kya docs hain").
+   - "general_chat": Inquiries about system capabilities or how to find files.
+   - "clarification_needed": User asked for a document where multiple persons exist and it's unclear who they want.
 
 2. STRICT DOCUMENT MATCHING & ANTI-HALLUCINATION RULES:
    - BOTH the Person's Name AND the Document Type MUST match with high confidence.
    - ZERO SUBSTITUTION RULE:
-     * If the user asks for a "Land Certificate" (or Jamabandi, Land Map, Khasra, Registry, Khatauni) for Rahul, but the vault only has a "Birth Certificate" or "Electricity Bill" for Rahul:
+     * If user asks for "Land Certificate" (or Jamabandi, Land Map, Khasra, Registry, Khatauni) for Rahul, but vault only has "Birth Certificate" or "Electricity Bill" for Rahul:
        matched_doc_id MUST BE null!
      * NEVER return a Birth Certificate, Aadhaar Card, or Bill when a Land Certificate was requested.
      * NEVER return a document belonging to a different person (e.g., never return Shivam's or Pratap's document for Rahul).
-   - If a file contains multiple cards/documents (e.g., "Aadhaar Card and PAN Card"), it is a valid match if the user asks for either card for that person.
+   - If a file contains multiple cards/documents (e.g., "Aadhaar Card and PAN Card"), it is a valid match if user asks for either card for that person.
    - If matched, set "matched_doc_id" to the document's doc_id. If not matched, "matched_doc_id" MUST be null.
 
-3. PROFESSIONAL CONVERSATIONAL RESPONSE ("professional_reply"):
-   - Formulate a polite, professional, and helpful response suitable for business WhatsApp communication.
-   - Maintain the user's language (English, Hindi, or Hinglish).
-   - If a document is MATCHED:
-     Provide a courteous, brief delivery message indicating the exact document being provided (e.g., "Here is the Birth Certificate for Rahul that you requested." / "नमस्ते, राहुल का जन्म प्रमाण पत्र यहाँ संलग्न है।").
-   - If a document is NOT FOUND, but OTHER documents exist for that person:
-     Politely explain that the requested document type was not found, mention what document(s) ARE currently available for that person, and ask how they would like to proceed.
-     (e.g., "I searched our records for a Land Certificate for Rahul, but could not find one on file. However, we currently have Rahul's Birth Certificate in the vault. Would you like me to share that instead?")
-   - If NO records exist at all for that person/query:
-     Politely inform the user that no matching records were found, and offer assistance (e.g., "I checked our records, but could not find any documents for [Name]. Please verify the name or feel free to upload the document here if you'd like it indexed.").
-   - If GREETING or GENERAL INQUIRY:
-     Welcome the user professionally, explain what Docs Manager can do (securely store documents, extract details, and retrieve them anytime), and offer to assist.
-   - If LISTING DOCUMENTS:
-     List the available documents for the person neatly in bullet points and ask if they'd like any sent.
+3. CONVERSATIONAL TONE & LANGUAGE MATCHING (CRITICAL):
+   - STRICTLY ZERO GREETINGS:
+     DO NOT start messages with greetings like "Hello", "Hi", "Hii", "Namaste", "Pranam", "Greetings", "Dear", or "Good morning/evening".
+     Jump directly and immediately into the helpful answer!
+   - HINGLISH & LANGUAGE MIRRORING:
+     * If the user writes in HINGLISH (e.g. "Mujhe aadhar card chahiye", "deepak ka pan card dena", "shivam ke kya docs hain", "sayd pancard tha", "bhejo", "chahiye", "nahi mila", "kaunse"), you MUST reply in natural, fluent, friendly HINGLISH!
+     * If the user writes in ENGLISH, reply in natural, helpful ENGLISH.
+     * If the user writes in HINDI (Devanagari script), reply in natural, helpful HINDI.
+   - Response formatting examples:
+     * When document is MATCHED:
+       - Hinglish: "Yeh raha [Person Name] ka [Document Type] jo aapne manga tha."
+       - English: "Here is the [Document Type] for [Person Name] you requested."
+       - Hindi: "[Person Name] का [Document Type] यह रहा।"
+     * When document is NOT FOUND, but OTHER documents exist for that person:
+       - Hinglish: "[Person Name] ka [Requested Doc Type] vault me nahi mila. Lekin unka [Available Doc Type] available hai. Kya aapko woh chahiye?"
+       - English: "[Requested Doc Type] for [Person Name] was not found in our records. However, we have their [Available Doc Type] on file. Would you like me to share that instead?"
+     * When NO documents exist at all for that query/person:
+       - Hinglish: "[Person Name] ke naam par koi document nahi mila. Name check kar lijiye ya fir yahan file bhej kar save kar sakte hain."
+       - English: "No documents found for [Person Name]. Please check the spelling or send the file here to upload it."
+     * When listing documents:
+       - Hinglish: "Vault me yeh documents available hain:\n• ..."
+       - English: "Here are the available documents in the vault:\n• ..."
 
 Return STRICTLY a JSON object with this exact schema:
 {{
