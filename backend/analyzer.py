@@ -219,6 +219,29 @@ def analyze_document(
     return default_fallback
 
 
+def strip_greetings(text: str) -> str:
+    """Guarantees strictly zero greetings in assistant messages (both English, Hinglish and Hindi)."""
+    if not text:
+        return ""
+    cleaned = text.strip()
+    # Strip English and Roman Hinglish greetings
+    cleaned = re.sub(
+        r"^(?:hello|hi|hii|hiii|hey|heyy|namaste|namaskar|pranam|greetings|dear|good\s+(?:morning|afternoon|evening))\s*[,!.:-]*\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Strip Devanagari Hindi greetings
+    cleaned = re.sub(
+        r"^(?:नमस्ते|नमस्कार|प्रणाम|सुप्रभात|शुभ\s+संध्या|हाय|हेलो)\s*[,!.:-]*\s*",
+        "",
+        cleaned,
+    ).strip()
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned
+
+
 def conversational_document_retrieval(
     query: str,
     documents: List[Dict[str, Any]],
@@ -330,10 +353,11 @@ Your Objectives & Strict Rules:
 
 3. CONVERSATIONAL TONE & LANGUAGE MATCHING (CRITICAL):
    - STRICTLY ZERO GREETINGS:
-     DO NOT start messages with greetings like "Hello", "Hi", "Hii", "Namaste", "Pranam", "Greetings", "Dear", or "Good morning/evening".
+     DO NOT start messages with greetings like "Hello", "Hi", "Hii", "Namaste", "Pranam", "Greetings", "Dear", "Good morning/evening", or "नमस्ते".
      Jump directly and immediately into the helpful answer!
    - HINGLISH & LANGUAGE MIRRORING:
-     * If the user writes in HINGLISH (e.g. "Mujhe aadhar card chahiye", "deepak ka pan card dena", "shivam ke kya docs hain", "sayd pancard tha", "bhejo", "chahiye", "nahi mila", "kaunse"), you MUST reply in natural, fluent, friendly HINGLISH!
+     * If the user writes in HINGLISH (e.g. "Mujhe aadhar card chahiye", "deepak ka pan card dena", "shivam ke kya docs hain", "sayd pancard tha", "bhejo", "chahiye", "nahi mila", "kaunse"), you MUST reply in natural, fluent, friendly HINGLISH in Latin/English characters!
+     * NEVER use Devanagari Hindi script (हिंदी) unless the user's input was written in Devanagari script. If user writes in Latin letters, your reply MUST be in Latin letters!
      * If the user writes in ENGLISH, reply in natural, helpful ENGLISH.
      * If the user writes in HINDI (Devanagari script), reply in natural, helpful HINDI.
    - Response formatting examples:
@@ -386,18 +410,20 @@ Return STRICTLY a JSON object with this exact schema:
                             matched_doc = doc
                             break
 
+                reply_text = strip_greetings(result.get("professional_reply") or "I could not find the requested document.")
                 return {
                     "intent": result.get("intent", "document_request"),
                     "matched_doc_id": matched_id if matched_doc else None,
                     "matched_doc": matched_doc,
                     "requested_person": result.get("requested_person"),
                     "requested_doc_type": result.get("requested_doc_type"),
-                    "professional_reply": result.get("professional_reply") or "I could not find the requested document.",
+                    "professional_reply": reply_text or "Requested document was not found in records.",
                 }
         except Exception as model_err:
             print(f"[analyzer.conversational_document_retrieval] Model '{current_model}' failed: {model_err}. Trying fallback...")
             continue
 
+    default_res["professional_reply"] = strip_greetings(default_res["professional_reply"])
     return default_res
 
 
