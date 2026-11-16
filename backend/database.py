@@ -15,7 +15,11 @@ from backend import supabase_client
 # In-memory document metadata cache for ultra-fast webhook responses
 _documents_cache: Optional[List[Dict[str, Any]]] = None
 _documents_cache_time: float = 0.0
-DOCUMENTS_CACHE_TTL = 60.0  # seconds
+_clients_cache: Optional[List[Dict[str, Any]]] = None
+_clients_cache_time: float = 0.0
+_settings_cache: Optional[Dict[str, Any]] = None
+_settings_cache_time: float = 0.0
+CACHE_TTL = 60.0  # seconds
 
 
 def invalidate_documents_cache() -> None:
@@ -23,6 +27,20 @@ def invalidate_documents_cache() -> None:
     global _documents_cache, _documents_cache_time
     _documents_cache = None
     _documents_cache_time = 0.0
+
+
+def invalidate_clients_cache() -> None:
+    """Invalidates the in-memory clients cache."""
+    global _clients_cache, _clients_cache_time
+    _clients_cache = None
+    _clients_cache_time = 0.0
+
+
+def invalidate_settings_cache() -> None:
+    """Invalidates the in-memory system settings cache."""
+    global _settings_cache, _settings_cache_time
+    _settings_cache = None
+    _settings_cache_time = 0.0
 
 
 def save_document(
@@ -73,7 +91,7 @@ def list_documents(force_refresh: bool = False) -> List[Dict[str, Any]]:
     """Lists all stored documents directly from Supabase Cloud DB with TTL caching."""
     global _documents_cache, _documents_cache_time
     now = time.time()
-    if not force_refresh and _documents_cache is not None and (now - _documents_cache_time) < DOCUMENTS_CACHE_TTL:
+    if not force_refresh and _documents_cache is not None and (now - _documents_cache_time) < CACHE_TTL:
         return _documents_cache
 
     docs = supabase_client.get_all_metadata_from_supabase_db()
@@ -113,9 +131,18 @@ def normalize_phone(phone: Optional[str]) -> str:
     return re.sub(r"\D", "", clean)
 
 
-def list_clients() -> List[Dict[str, Any]]:
-    """Retrieves all onboarded clients."""
-    return supabase_client.get_all_clients_from_db()
+def list_clients(force_refresh: bool = False) -> List[Dict[str, Any]]:
+    """Retrieves all onboarded clients with TTL caching."""
+    global _clients_cache, _clients_cache_time
+    now = time.time()
+    if not force_refresh and _clients_cache is not None and (now - _clients_cache_time) < CACHE_TTL:
+        return _clients_cache
+
+    clients = supabase_client.get_all_clients_from_db()
+    if clients is not None:
+        _clients_cache = clients
+        _clients_cache_time = now
+    return _clients_cache or clients or []
 
 
 def save_client(
@@ -147,6 +174,7 @@ def save_client(
     }
 
     supabase_client.save_client_to_db(record)
+    invalidate_clients_cache()
     return record
 
 
@@ -167,22 +195,36 @@ def update_client(client_id: str, updates: Dict[str, Any]) -> Optional[Dict[str,
 
     updated["updated_at"] = datetime.now(timezone.utc).isoformat()
     supabase_client.save_client_to_db(updated)
+    invalidate_clients_cache()
     return updated
 
 
 def delete_client(client_id: str) -> bool:
     """Deletes an onboarded client by client_id."""
-    return supabase_client.delete_client_from_db(client_id)
+    res = supabase_client.delete_client_from_db(client_id)
+    invalidate_clients_cache()
+    return res
 
 
-def get_system_settings() -> Dict[str, Any]:
-    """Retrieves system-wide settings like global allow_random_uploads."""
-    return supabase_client.get_system_settings()
+def get_system_settings(force_refresh: bool = False) -> Dict[str, Any]:
+    """Retrieves system-wide settings like global allow_random_uploads with TTL caching."""
+    global _settings_cache, _settings_cache_time
+    now = time.time()
+    if not force_refresh and _settings_cache is not None and (now - _settings_cache_time) < CACHE_TTL:
+        return _settings_cache
+
+    settings = supabase_client.get_system_settings()
+    if settings is not None:
+        _settings_cache = settings
+        _settings_cache_time = now
+    return _settings_cache or settings or {}
 
 
 def save_system_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
     """Saves system-wide settings."""
-    return supabase_client.save_system_settings(settings)
+    res = supabase_client.save_system_settings(settings)
+    invalidate_settings_cache()
+    return res
 
 
 def is_upload_allowed(phone: Optional[str]) -> bool:
